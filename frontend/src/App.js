@@ -1,57 +1,66 @@
-import { useEffect } from "react";
+import React from "react";
 import "@/App.css";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
-import { HOME } from "@/constants/testIds";
-
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
-
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
-
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
-
-  return (
-    // The marker attribute below lets the platform probe detect the stock splash — remove it with this page
-    <div data-emergent-splash>
-      <header className="App-header">
-        <a
-          data-testid={HOME.emergentLink}
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
-  );
-};
+import { Toaster } from "@/components/ui/sonner";
+import { AuthProvider } from "@/context/AuthContext";
+import { ContentProvider } from "@/context/ContentContext";
+import ProtectedRoute from "@/components/ProtectedRoute";
+import OfferBanner from "@/components/OfferBanner";
+import Home from "@/pages/Home";
+import Login from "@/pages/Login";
+import Register from "@/pages/Register";
+import Portal from "@/pages/Portal";
+import Admin from "@/pages/Admin";
+import Membership from "@/pages/Membership";
+import CheckoutResult from "@/pages/CheckoutResult";
+import LegalPage from "@/pages/LegalPage";
+import Concierge from "@/components/Concierge";
 
 function App() {
-  return (
-    <div className="App">
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </div>
-  );
+    return (
+        <ContentProvider>
+            <AuthProvider>
+                <div className="App">
+                    <BrowserRouter>
+                        <OfferBanner />
+                        <Routes>
+                            <Route path="/" element={<Home />} />
+                            <Route path="/login" element={<Login />} />
+                            <Route path="/register" element={<Register />} />
+                            <Route path="/membership" element={<Membership />} />
+                            <Route path="/membership/success" element={<CheckoutResult kind="membership" success />} />
+                            <Route path="/membership/cancel" element={<CheckoutResult kind="membership" success={false} />} />
+                            <Route path="/privacy" element={<LegalPage kind="privacy" />} />
+                            <Route path="/terms" element={<LegalPage kind="terms" />} />
+                            <Route path="/refund-policy" element={<LegalPage kind="refund" />} />
+                            <Route path="/cookies" element={<LegalPage kind="cookies" />} />
+                            <Route path="/medical-disclaimer" element={<LegalPage kind="medical_disclaimer" />} />
+                            <Route path="/accessibility" element={<LegalPage kind="accessibility" />} />
+                            <Route path="/contact" element={<LegalPage kind="contact" />} />
+                            <Route
+                                path="/portal"
+                                element={
+                                    <ProtectedRoute>
+                                        <Portal />
+                                    </ProtectedRoute>
+                                }
+                            />
+                            <Route
+                                path="/admin"
+                                element={
+                                    <ProtectedRoute requireRole="admin">
+                                        <Admin />
+                                    </ProtectedRoute>
+                                }
+                            />
+                        </Routes>
+                    </BrowserRouter>
+                    <Toaster richColors position="top-center" />
+                    <Concierge />
+                </div>
+            </AuthProvider>
+        </ContentProvider>
+    );
 }
 
 export default App;

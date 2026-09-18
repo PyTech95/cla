@@ -1,0 +1,36 @@
+{
+  "summary": "Tested new features from review request (team CMS, editable hero facility overlay, editable Contact hours, gallery marquee with video support, video uploads, Concierge mounted). Backend: 39/39 pytest tests pass including all new endpoints (/api/team, /admin/cms/team CRUD, PUT /api/admin/content for hero.facility_* + contact.hours keys, /admin/cms/gallery video items, POST /api/admin/upload accepts video/mp4 and rejects text/plain). Frontend: homepage renders hero facility image on desktop AND mobile (390px viewport confirmed), Team section with member card, Gallery marquee + View gallery button + grid + lightbox (close/prev/next), Contact Hours card, Concierge widget mounted (camille-launcher/panel/input/send) with working POST /api/chat. Admin > Site editor tab renders all editors including HERO FACILITY IMAGE URL, FACILITY SIGNATURE/TITLE/SUBTITLE, Team, Gallery, Hours.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Gallery.jsx lightbox", "issue": "The lightbox <Media> element does NOT have a data-testid=\"lightbox-image\" attribute. Review request explicitly listed lightbox-image among required testids. lightbox-close/prev/next are present and working. Fix: add data-testid=\"lightbox-image\" to the <Media> inside the lightbox Dialog (Gallery.jsx ~line 198-203).", "selector": "[data-testid='lightbox-image']", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Concierge lead capture", "issue": "The lead form (lead-name/phone/interest/submit) is conditionally rendered only after the user sends >=2 chat messages (Concierge.jsx line 51: `if (userCount >= 2 && !leadShown && !leadSent) setLeadShown(true);`). Not a bug — expected UX — but automated testers/QA should send 2 chat messages before asserting the form is visible. Confirmed the form testids exist in code and render when triggered.", "affected_selectors": ["[data-testid='lead-name']","[data-testid='lead-submit']"]}
+    ],
+    "design_issues": [
+      {"screen": "Global (all pages)", "issues": ["A yellow promo banner 'TEST_Offer — d' still appears at top of every page (seeded during iteration_1 testing). Should be deleted from /api/admin/offers before shipping to user."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_cla_spa30.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Add data-testid='lightbox-image' to the <Media> element inside the lightbox Dialog in /app/frontend/src/components/sections/Gallery.jsx (~line 198).",
+    "Delete leftover TEST_Offer seed data via admin CMS (or via DELETE /api/admin/offers/{id}) so the public homepage no longer shows a stray yellow promo banner.",
+    "(Optional UX) Consider surfacing the lead form immediately when the user opens the Concierge (or offer a 'Request a callback' button) instead of gating it behind 2 chat turns; otherwise QA/users may believe the lead form is missing."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 1759 lines — split into routers (auth/admin/cms/payments/chat/content) for maintainability.",
+    "POST /api/admin/upload correctly gates by content_type against ALLOWED_UPLOAD_MIME (image+video); rejection message now lists allowed types (verified).",
+    "GET /api/hero-images falls back to brand.hero_facility_image_url content key before DEFAULT_HERO_IMAGES — good, but this coupling should be documented so admins know clearing hero_images collection but setting the facility URL still yields images.",
+    "Gallery.jsx grid buttons inside the 'View gallery' dialog have no data-testid on the buttons themselves — only marquee items do (gallery-item-{i}). Consider adding gallery-grid-item-{i} for E2E test coverage of the grid → lightbox path.",
+    "Concierge lead form is gated by userCount>=2 which is undiscoverable for testers — either lower the threshold or expose an explicit 'Get in touch' button that sets leadShown=true."
+  ],
+  "updated_files": ["/app/backend/tests/test_cla_spa30.py"],
+  "success_rate": {"backend": "100% (39/39)", "frontend": "~95% (all sections render, all critical testids resolve except lightbox-image; TEST_ promo banner still visible)"},
+  "test_credentials": "Admin: admin@cla-wellness.com / ClaAdmin2026! (verified). New client users created dynamically.",
+  "seed_data_creation": "Created 1 TEST_Lead via POST /api/leads and 1 TEST_UI_Lead from the Concierge (also POST /api/leads). Reset hero.facility_* + contact.hours content keys back to defaults after content-key tests. Admin CMS CRUD tests self-cleanup.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend fully green (39/39). Frontend all critical review-request testids present and wired to APIs. Only remaining minor items: (1) add lightbox-image testid; (2) delete TEST_Offer seed banner. Concierge is mounted globally in App.js and functional (chat replies via EMERGENT_LLM_KEY confirmed). Hero facility image renders on mobile (390x844 confirmed by screenshot). Admin SiteEditor exposes editors for hero.facility_signature/title/subtitle, brand.hero_facility_image_url, contact.hours/hours_title, and Team CMS.",
+  "rca of the issue": "N/A — all review-request features work. Minor: lightbox-image testid missing because Media component in Gallery.jsx was rendered without passing a testid prop. Fix is a one-line addition."
+}

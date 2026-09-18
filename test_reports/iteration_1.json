@@ -1,0 +1,39 @@
+{
+  "summary": "Deployment-readiness verification of cla-spa30 (CLA Aesthetics & Wellness). Backend: 29/29 pytest tests passing including public content endpoints, auth (register/login/me/refresh), leads, portal intake CRUD, change password, admin (clients/revenue/payments), CMS CRUD (news/offers/generic), Emergent LLM chat, and Stripe test-mode membership checkout session creation. Frontend: landing page renders all sections, admin login + CRM dashboard load, register→portal redirect works, invalid login shows error. TWO frontend issues found: (1) Concierge widget not mounted (imports missing in App.js) so camille-* and lead-* testids referenced in the review request don't exist in the DOM; (2) Portal page has no change-password UI (backend endpoint works).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "App.js / Concierge", "issue": "Concierge component is defined in /app/frontend/src/components/Concierge.jsx but never imported or rendered anywhere. As a result, the AI concierge chat (camille-launcher, camille-panel, camille-input, camille-send) AND the public lead form (lead-name, lead-phone, lead-interest, lead-submit) are completely absent from the DOM on all pages. Fix: import Concierge in App.js and render <Concierge /> inside AuthProvider/ContentProvider so it appears on every page (or at least on Home).", "selector": "[data-testid='camille-launcher'], [data-testid='lead-name']", "priority": "CRITICAL"},
+      {"component": "Portal.jsx", "issue": "Change password UI is not present on /portal (no change-password-form / change-password-submit testids). Backend PUT /api/auth/password works fine. Add a change-password form section/tab on Portal.", "selector": "[data-testid='change-password-form']", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Public lead capture from landing page", "issue": "Home landing page has no visible lead/contact form (Contact section only has phone/email/address links). Lead capture form was expected via the Concierge widget, which is not mounted. POST /api/leads works via API only.", "affected_selectors": ["[data-testid='lead-name']","[data-testid='lead-phone']","[data-testid='lead-interest']","[data-testid='lead-submit']"]}
+    ],
+    "design_issues": [
+      {"screen": "Global (all pages)", "issues": ["An admin promo banner text 'TEST_Offer — d' from seeded test data appears at the top of the public landing page; delete TEST_ offer/news items before publishing."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_cla_spa30.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Import and render <Concierge /> in /app/frontend/src/App.js (inside providers, outside <Routes>) so the chat widget and public lead form appear on every page.",
+    "Add change-password form to /app/frontend/src/pages/Portal.jsx with data-testid='change-password-form' and submit button data-testid='change-password-submit' calling PUT /api/auth/password with {current_password, new_password}.",
+    "Clean seeded TEST_ demo data (TEST_Offer, TEST_Lead) before pointing user to Publish.",
+    "Optionally add a standalone lead form in the Contact section as a fallback if Concierge is dismissed."
+  ],
+  "critical_code_review_comments": [
+    "Concierge.jsx exists but is dead code — must be wired into App.js.",
+    "server.py is 1724 lines; consider splitting into routers (auth, admin, cms, payments, chat) for maintainability.",
+    "PUT /api/auth/password uses field name `current_password` (fine) — Portal UI must match; not old_password.",
+    "POST /api/chat requires session_id in body — frontend must generate/persist a session id per user session.",
+    "Stripe key sk_test_emergent works with the emergentintegrations helper and produces a checkout URL; do NOT switch to live keys without user's real Stripe secret.",
+    "Admin `/admin/news`, `/admin/offers`, and generic `/admin/cms/{kind}` all return `{ok:true, item:{...}}` shape — frontend admin code must consume `item` field (already does)."
+  ],
+  "updated_files": ["/app/backend/tests/test_cla_spa30.py"],
+  "success_rate": {"backend": "100% (29/29)", "frontend": "~70% (core pages load, admin/auth flows work; Concierge + change-password UI missing)"},
+  "test_credentials": "Admin: admin@cla-wellness.com / ClaAdmin2026! (verified working). Client accounts created dynamically per test.",
+  "seed_data_creation": "Created 1 TEST_Lead via POST /api/leads and 1 test client via POST /api/auth/register during automated testing. Admin CMS CRUD tests self-cleanup their items (create+delete).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend is fully green. After main agent (E1) wires <Concierge /> into App.js and adds change-password UI to Portal, re-run frontend flow: (1) landing page lead form submit → check POST /api/leads network call & Concierge shows sent state; (2) camille-launcher opens panel; camille-send POSTs /api/chat with session_id and displays LLM reply (may take 5-10s); (3) /portal change-password-submit sends {current_password,new_password} to /api/auth/password. Backend endpoints and admin dashboard need no further changes.",
+  "rca of the issue": "Concierge component was authored but the developer never added `import Concierge from '@/components/Concierge'` and `<Concierge />` in App.js (or Home.jsx). Reproduction: open landing page, run document.querySelector('[data-testid=camille-launcher]') → null. Mitigation: import in App.js above <BrowserRouter> children and render once so it overlays every route."
+}

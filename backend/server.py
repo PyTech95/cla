@@ -1,89 +1,1758 @@
-from fastapi import FastAPI, APIRouter
 from dotenv import load_dotenv
-from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
-import os
-import logging
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List
-import uuid
-from datetime import datetime, timezone
-
 
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+load_dotenv(ROOT_DIR / ".env")
 
-# MongoDB connection
-mongo_url = os.environ['MONGO_URL']
+import os
+import uuid
+import logging
+import smtplib
+import requests
+from datetime import datetime, timezone, timedelta, date as date_cls
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from typing import List, Optional
+
+import bcrypt
+import jwt
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, Query, UploadFile, File
+from fastapi.responses import JSONResponse
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel, Field, EmailStr
+
+# ---------------- Logging ----------------
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger("cla")
+
+# ---------------- DB ----------------
+mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+db = client[os.environ["DB_NAME"]]
 
-# Create the main app without a prefix
-app = FastAPI()
+# ---------------- JWT ----------------
+JWT_ALGORITHM = "HS256"
+ACCESS_MIN = 15
+REFRESH_DAYS = 7
 
-# Create a router with the /api prefix
+
+def get_jwt_secret() -> str:
+    return os.environ["JWT_SECRET"]
+
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except Exception:
+        return False
+
+
+def create_access_token(user_id: str, email: str, role: str) -> str:
+    payload = {
+        "sub": user_id,
+        "email": email,
+        "role": role,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=ACCESS_MIN),
+        "type": "access",
+    }
+    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
+
+
+def create_refresh_token(user_id: str) -> str:
+    payload = {
+        "sub": user_id,
+        "exp": datetime.now(timezone.utc) + timedelta(days=REFRESH_DAYS),
+        "type": "refresh",
+    }
+    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
+
+
+def set_auth_cookies(response: Response, access: str, refresh: str):
+    common = {"httponly": True, "secure": True, "samesite": "none", "path": "/"}
+    response.set_cookie("access_token", access, max_age=ACCESS_MIN * 60, **common)
+    response.set_cookie("refresh_token", refresh, max_age=REFRESH_DAYS * 24 * 60 * 60, **common)
+
+
+def clear_auth_cookies(response: Response):
+    response.delete_cookie("access_token", path="/")
+    response.delete_cookie("refresh_token", path="/")
+
+
+# ---------------- Models ----------------
+class RegisterIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    email: EmailStr
+    password: str = Field(min_length=6, max_length=200)
+    phone: Optional[str] = None
+
+
+class LoginIn(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class ChangePasswordIn(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=6, max_length=200)
+
+
+class UserOut(BaseModel):
+    id: str
+    name: str
+    email: EmailStr
+    role: str
+    phone: Optional[str] = None
+
+
+class LeadIn(BaseModel):
+    name: str
+    phone: str
+    interest: Optional[str] = None
+    contact_via: Optional[str] = "call"  # call | whatsapp
+    message: Optional[str] = None
+
+
+class ChatIn(BaseModel):
+    session_id: str
+    message: str
+
+
+class SmtpSettings(BaseModel):
+    host: str = "smtp.gmail.com"
+    port: int = 587
+    username: str = ""
+    app_password: str = ""
+    from_name: str = "CLA Aesthetics & Wellness"
+    from_email: str = ""
+    recipients: List[str] = []
+    enabled: bool = False
+
+
+# ---------------- Services Catalog ----------------
+SERVICES = [
+    {"id": "botox", "category": "Injectables", "name": "Botox", "description": "Smooth fine lines & wrinkles with precision-placed neurotoxin. Results last 3–4 months.", "duration": "30 min", "price": "From $12/unit", "image": "https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?auto=format&fit=crop&w=1200&q=80"},
+    {"id": "fillers", "category": "Injectables", "name": "Dermal Fillers", "description": "Enhance contours and add natural volume to lips, cheeks and jawline.", "duration": "45 min", "price": "From $650/syringe", "image": "https://images.unsplash.com/photo-1597931752949-98c74b5b159f?auto=format&fit=crop&w=1200&q=80"},
+    {"id": "pdo", "category": "Lifts", "name": "PDO Thread Lift", "description": "Non-surgical lift using absorbable threads for natural contours.", "duration": "60 min", "price": "From $800", "image": "https://images.unsplash.com/photo-1559599101-f09722fb4948?auto=format&fit=crop&w=900&q=80"},
+    {"id": "prp-facial", "category": "Facials", "name": "PRP Facial", "description": "Collagen-boosting plasma therapy for radiant rejuvenation.", "duration": "60 min", "price": "From $450", "image": "https://images.unsplash.com/photo-1616394584738-fc6e612e71b9?auto=format&fit=crop&w=1200&q=80"},
+    {"id": "prf", "category": "Facials", "name": "PRF Treatment", "description": "Advanced healing with platelet-rich fibrin for a natural glow.", "duration": "60 min", "price": "From $500", "image": "https://images.unsplash.com/photo-1616394584738-fc6e612e71b9?auto=format&fit=crop&w=1200&q=80"},
+    {"id": "hydrofacial", "category": "Facials", "name": "Hydrofacial", "description": "Deep cleansing, hydration boost and instant glow in one ritual.", "duration": "60 min", "price": "From $250", "image": "https://images.unsplash.com/photo-1616394584738-fc6e612e71b9?auto=format&fit=crop&w=1200&q=80"},
+    {"id": "laser", "category": "Skin", "name": "Laser Therapy", "description": "Target imperfections for smoother, clearer skin.", "duration": "45 min", "price": "From $295", "image": "https://images.unsplash.com/photo-1570172619644-dfd03ed5d881?auto=format&fit=crop&w=900&q=80"},
+    {"id": "microneedling-prp", "category": "Skin", "name": "Microneedling + PRP", "description": "Skin renewal and even tone using collagen induction with PRP.", "duration": "75 min", "price": "From $400/session", "image": "https://images.unsplash.com/photo-1570172619644-dfd03ed5d881?auto=format&fit=crop&w=900&q=80"},
+    {"id": "skin-rejuvenation", "category": "Skin", "name": "Skin Rejuvenation", "description": "A complete transformation for radiant, glass-skin results.", "duration": "90 min", "price": "From $350", "image": "https://images.unsplash.com/photo-1570172619644-dfd03ed5d881?auto=format&fit=crop&w=900&q=80"},
+    {"id": "hair-restoration", "category": "Hair", "name": "Hair Restoration", "description": "Stimulate new growth for fuller, thicker hair.", "duration": "60 min", "price": "From $500 · 3-pack $1,350", "image": "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=900&q=80"},
+    {"id": "iv-nutrition", "category": "Wellness", "name": "IV Nutrition Therapy", "description": "Boost immunity, energy and rapid hydration with custom IV blends.", "duration": "45 min", "price": "From $185", "image": "https://images.unsplash.com/photo-1559757175-5700dde675bc?auto=format&fit=crop&w=900&q=80"},
+    {"id": "weight-loss", "category": "Wellness", "name": "Weight Loss Program", "description": "Customized plans under medical supervision.", "duration": "Consultation", "price": "From $299", "image": "https://images.unsplash.com/photo-1559757175-5700dde675bc?auto=format&fit=crop&w=900&q=80"},
+    {"id": "body-spa", "category": "Body Spa", "name": "Body Spa", "description": "A serene full-body spa experience — massage, body rituals and signature finishing touches. Launching soon at CLA.", "duration": "Coming soon", "price": "Coming soon", "image": "https://images.unsplash.com/photo-1544161515-4ab6ce6db874?auto=format&fit=crop&w=1200&q=80", "comingSoon": True},
+]
+
+DEFAULT_SLOTS = [
+    "10:00 AM", "10:30 AM", "11:00 AM", "11:30 AM", "12:00 PM", "12:30 PM",
+    "1:00 PM", "1:30 PM", "2:00 PM", "2:30 PM", "3:00 PM", "3:30 PM",
+    "4:00 PM", "4:30 PM", "5:00 PM", "5:30 PM", "6:00 PM", "6:30 PM", "7:00 PM",
+]
+
+
+# ---------------- Auth Dependency ----------------
+async def get_current_user(request: Request) -> dict:
+    token = request.cookies.get("access_token")
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        if payload.get("type") != "access":
+            raise HTTPException(status_code=401, detail="Invalid token type")
+        user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+        return user
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+async def get_optional_user(request: Request) -> Optional[dict]:
+    try:
+        return await get_current_user(request)
+    except HTTPException:
+        return None
+
+
+async def require_admin(user: dict = Depends(get_current_user)) -> dict:
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+# ---------------- App ----------------
+app = FastAPI(title="CLA Aesthetics API")
 api_router = APIRouter(prefix="/api")
 
 
-# Define Models
-class StatusCheck(BaseModel):
-    model_config = ConfigDict(extra="ignore")  # Ignore MongoDB's _id field
-    
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+# ---------------- Brute Force ----------------
+def get_ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
 
-# Add your routes to the router instead of directly to app
+async def check_lock(ip: str, email: str) -> Optional[int]:
+    """Returns remaining lock seconds if locked, else None."""
+    key = f"{ip}:{email.lower()}"
+    rec = await db.login_attempts.find_one({"key": key}, {"_id": 0})
+    if rec and rec.get("locked_until"):
+        locked_until = datetime.fromisoformat(rec["locked_until"])
+        now = datetime.now(timezone.utc)
+        if locked_until > now:
+            return int((locked_until - now).total_seconds())
+    return None
+
+
+async def record_failed(ip: str, email: str):
+    key = f"{ip}:{email.lower()}"
+    rec = await db.login_attempts.find_one({"key": key}, {"_id": 0}) or {"key": key, "count": 0}
+    rec["count"] = int(rec.get("count", 0)) + 1
+    if rec["count"] >= 5:
+        rec["locked_until"] = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+        rec["count"] = 0
+    await db.login_attempts.update_one({"key": key}, {"$set": rec}, upsert=True)
+
+
+async def reset_attempts(ip: str, email: str):
+    key = f"{ip}:{email.lower()}"
+    await db.login_attempts.delete_one({"key": key})
+
+
+# ---------------- Public Endpoints ----------------
 @api_router.get("/")
 async def root():
-    return {"message": "Hello World"}
+    return {"message": "CLA Aesthetics & Wellness API"}
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    
-    # Convert to dict and serialize datetime to ISO string for MongoDB
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
 
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    # Exclude MongoDB's _id field from the query results
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
-    
-    # Convert ISO string timestamps back to datetime objects
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
-    
-    return status_checks
+@api_router.get("/services")
+async def list_services():
+    cur = db.services.find({}, {"_id": 0}).sort("order", 1)
+    items = [s async for s in cur]
+    if not items:
+        items = SERVICES
+    return {"services": items}
 
-# Include the router in the main app
+
+@api_router.post("/leads")
+async def create_lead(payload: LeadIn):
+    lead = {
+        "id": str(uuid.uuid4()),
+        "name": payload.name,
+        "phone": payload.phone,
+        "interest": payload.interest or "",
+        "contact_via": payload.contact_via or "call",
+        "message": payload.message or "",
+        "status": "new",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.leads.insert_one(lead.copy())
+    lead.pop("_id", None)
+    return {"ok": True, "lead": lead}
+
+
+@api_router.get("/leads")
+async def list_leads(_: dict = Depends(require_admin)):
+    cur = db.leads.find({}, {"_id": 0}).sort("created_at", -1)
+    return {"leads": [x async for x in cur]}
+
+
+@api_router.patch("/leads/{lead_id}")
+async def update_lead(lead_id: str, status: str = Query(...), _: dict = Depends(require_admin)):
+    if status not in {"new", "contacted", "converted", "archived"}:
+        raise HTTPException(status_code=400, detail="Invalid status")
+    await db.leads.update_one({"id": lead_id}, {"$set": {"status": status}})
+    return {"ok": True}
+
+
+# ---------------- Auth Endpoints ----------------
+@api_router.post("/auth/register")
+async def register(payload: RegisterIn, response: Response):
+    email = payload.email.lower()
+    existing = await db.users.find_one({"email": email})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    user = {
+        "id": str(uuid.uuid4()),
+        "email": email,
+        "name": payload.name,
+        "phone": payload.phone or "",
+        "role": "client",
+        "password_hash": hash_password(payload.password),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.users.insert_one(user)
+    access = create_access_token(user["id"], user["email"], user["role"])
+    refresh = create_refresh_token(user["id"])
+    set_auth_cookies(response, access, refresh)
+    return {"id": user["id"], "name": user["name"], "email": user["email"], "role": user["role"], "phone": user["phone"], "access_token": access, "refresh_token": refresh}
+
+
+@api_router.post("/auth/login")
+async def login(payload: LoginIn, request: Request, response: Response):
+    email = payload.email.lower()
+    ip = get_ip(request)
+    locked = await check_lock(ip, email)
+    if locked:
+        raise HTTPException(status_code=429, detail=f"Too many attempts. Try again in {locked // 60 + 1} min.")
+
+    user = await db.users.find_one({"email": email})
+    if not user or not verify_password(payload.password, user["password_hash"]):
+        await record_failed(ip, email)
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    await reset_attempts(ip, email)
+    access = create_access_token(user["id"], user["email"], user["role"])
+    refresh = create_refresh_token(user["id"])
+    set_auth_cookies(response, access, refresh)
+    return {"id": user["id"], "name": user["name"], "email": user["email"], "role": user["role"], "phone": user.get("phone", ""), "access_token": access, "refresh_token": refresh}
+
+
+@api_router.post("/auth/logout")
+async def logout(response: Response):
+    clear_auth_cookies(response)
+    return {"ok": True}
+
+
+@api_router.get("/auth/me")
+async def me(user: dict = Depends(get_current_user)):
+    return {"id": user["id"], "name": user["name"], "email": user["email"], "role": user["role"], "phone": user.get("phone", "")}
+
+
+@api_router.put("/auth/password")
+async def change_password(payload: ChangePasswordIn, response: Response, user: dict = Depends(get_current_user)):
+    # Fetch full user to access password_hash (get_current_user strips it)
+    full = await db.users.find_one({"id": user["id"]})
+    if not full or not verify_password(payload.current_password, full.get("password_hash", "")):
+        raise HTTPException(status_code=400, detail="Current password is incorrect.")
+    if payload.current_password == payload.new_password:
+        raise HTTPException(status_code=400, detail="New password must be different from current password.")
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"password_hash": hash_password(payload.new_password)}},
+    )
+    # Rotate tokens so any old session on other devices is invalidated when they attempt refresh
+    access = create_access_token(user["id"], user["email"], user["role"])
+    refresh = create_refresh_token(user["id"])
+    set_auth_cookies(response, access, refresh)
+    return {"ok": True, "access_token": access, "refresh_token": refresh}
+
+
+@api_router.post("/auth/refresh")
+async def refresh_token(request: Request, response: Response):
+    # Try cookie first, then Authorization header / JSON body for header-based clients
+    token = request.cookies.get("refresh_token")
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    if not token:
+        try:
+            body = await request.json()
+            token = body.get("refresh_token") if isinstance(body, dict) else None
+        except Exception:
+            token = None
+    if not token:
+        raise HTTPException(status_code=401, detail="No refresh token")
+    try:
+        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        if payload.get("type") != "refresh":
+            raise HTTPException(status_code=401, detail="Invalid token type")
+        user = await db.users.find_one({"id": payload["sub"]})
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+        access = create_access_token(user["id"], user["email"], user["role"])
+        set_auth_cookies(response, access, token)
+        return {"ok": True, "access_token": access, "refresh_token": token}
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Refresh expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid refresh")
+
+
+# ---------------- Chat (Camille) ----------------
+SYSTEM_PROMPT = (
+    "You are Camille, the warm, attentive AI concierge for CLA Aesthetics & Wellness — a luxury "
+    "medical-aesthetics studio in South Hempstead, NY founded by Cinthia Lariviere Alexandre. "
+    "Speak with poise and warmth; keep replies concise (2–4 sentences). Use British/American spelling consistently. "
+    "Help guests with services, pricing, hours and booking. Available services: "
+    "Botox (from $12/unit, 30 min), Dermal Fillers (from $650/syringe, 45 min), "
+    "PDO Thread Lift (from $800, 60 min), PRP Facial (from $450, 60 min), "
+    "PRF Treatment (from $500, 60 min), Hydrofacial (from $250, 60 min), "
+    "Laser Therapy (from $295, 45 min), Microneedling + PRP (from $400, 75 min), "
+    "Skin Rejuvenation (from $350, 90 min), Hair Restoration (from $500, 60 min), "
+    "IV Nutrition Therapy (from $185, 45 min), Weight Loss Program (from $299). "
+    "Body Spa is launching soon. Hours: Mon–Fri 10am–8pm · Sat 9am–6pm · Sun by appointment. "
+    "Address: 1078 Grand Avenue, South Hempstead, NY 11550. Phone: 516-620-9158. "
+    "Encourage booking via the calendar on this page. If asked anything medical, recommend a "
+    "personal consultation with Cinthia. Never invent prices not listed above."
+)
+
+
+@api_router.post("/chat")
+async def chat(payload: ChatIn):
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+    emergent_key = os.environ.get("EMERGENT_LLM_KEY")
+    if not (openai_key or anthropic_key or emergent_key):
+        raise HTTPException(status_code=503, detail="AI concierge is not configured.")
+
+    try:
+        if emergent_key:
+            from emergentintegrations.llm.chat import LlmChat, UserMessage
+            chat_inst = LlmChat(
+                api_key=emergent_key,
+                session_id=payload.session_id,
+                system_message=SYSTEM_PROMPT,
+            ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+            reply = str(await chat_inst.send_message(UserMessage(text=payload.message)))
+        elif openai_key:
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(api_key=openai_key)
+            completion = await client.chat.completions.create(
+                model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+                max_tokens=500,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": payload.message},
+                ],
+            )
+            reply = completion.choices[0].message.content
+        else:
+            from anthropic import AsyncAnthropic
+            client = AsyncAnthropic(api_key=anthropic_key)
+            msg = await client.messages.create(
+                model=os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest"),
+                max_tokens=500,
+                system=SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": payload.message}],
+            )
+            reply = msg.content[0].text
+        now = datetime.now(timezone.utc).isoformat()
+        await db.chat_messages.insert_many([
+            {"id": str(uuid.uuid4()), "session_id": payload.session_id, "role": "user", "text": payload.message, "created_at": now},
+            {"id": str(uuid.uuid4()), "session_id": payload.session_id, "role": "assistant", "text": str(reply), "created_at": now},
+        ])
+        return {"response": str(reply)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Chat error: {e}")
+        raise HTTPException(status_code=503, detail="Camille is resting for a moment. Please try again shortly.")
+
+
+# ---------------- Admin Settings (SMTP) ----------------
+@api_router.get("/admin/settings/smtp")
+async def get_smtp(_: dict = Depends(require_admin)):
+    doc = await db.settings.find_one({"key": "smtp"}, {"_id": 0}) or {}
+    smtp = doc.get("value", {})
+    # Mask password
+    if smtp.get("app_password"):
+        smtp["app_password_set"] = True
+        smtp["app_password"] = ""
+    else:
+        smtp["app_password_set"] = False
+    return smtp
+
+
+@api_router.put("/admin/settings/smtp")
+async def save_smtp(payload: SmtpSettings, _: dict = Depends(require_admin)):
+    # If empty app_password sent, keep existing
+    existing = await db.settings.find_one({"key": "smtp"}, {"_id": 0}) or {}
+    existing_val = existing.get("value", {})
+    new_val = payload.model_dump()
+    if not new_val.get("app_password") and existing_val.get("app_password"):
+        new_val["app_password"] = existing_val["app_password"]
+    await db.settings.update_one({"key": "smtp"}, {"$set": {"key": "smtp", "value": new_val}}, upsert=True)
+    return {"ok": True}
+
+
+@api_router.post("/admin/settings/smtp/test")
+async def test_smtp(_: dict = Depends(require_admin)):
+    smtp = await load_smtp_config()
+    if not smtp or not smtp.get("enabled"):
+        raise HTTPException(status_code=400, detail="SMTP is not enabled.")
+    try:
+        send_email_sync(
+            smtp,
+            to=[smtp.get("from_email") or smtp.get("username")],
+            subject="CLA Aesthetics — SMTP Test",
+            html_body="<p>This is a test email from your CLA Aesthetics admin panel. If you received this, your SMTP configuration is working.</p>",
+        )
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"SMTP test failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed: {e}")
+
+
+# ---------------- Email Helpers ----------------
+async def load_smtp_config() -> Optional[dict]:
+    doc = await db.settings.find_one({"key": "smtp"}, {"_id": 0})
+    if not doc:
+        return None
+    return doc.get("value")
+
+
+def send_email_sync(smtp: dict, to: List[str], subject: str, html_body: str):
+    msg = MIMEMultipart("alternative")
+    from_email = smtp.get("from_email") or smtp["username"]
+    from_name = smtp.get("from_name") or "CLA Aesthetics & Wellness"
+    msg["From"] = f"{from_name} <{from_email}>"
+    msg["To"] = ", ".join(to)
+    msg["Subject"] = subject
+    msg.attach(MIMEText(html_body, "html"))
+
+    server = smtplib.SMTP(smtp["host"], int(smtp["port"]))
+    server.starttls()
+    server.login(smtp["username"], smtp["app_password"])
+    server.sendmail(from_email, to, msg.as_string())
+    server.quit()
+
+
+
+
+
+# ============================================================
+# ============ ADVANCED CRM EXTENSIONS ========================
+# ============================================================
+
+MEMBERSHIP_PLANS = {
+    "first-visit": {"name": "First Visit Ritual", "amount": 120.00, "kind": "package", "recurring": False},
+    "glow": {"name": "Glow Membership", "amount": 129.00, "kind": "subscription", "recurring": True, "interval": "month"},
+    "couples": {"name": "Couple's Retreat", "amount": 320.00, "kind": "package", "recurring": False},
+}
+
+
+# ---------------- Models ----------------
+class MembershipCheckoutIn(BaseModel):
+    plan_id: str  # first-visit | glow | couples
+    origin_url: str
+
+
+class IntakeIn(BaseModel):
+    dob: Optional[str] = None
+    pregnancy: Optional[bool] = False
+    allergies: Optional[str] = ""
+    medications: Optional[str] = ""
+    skin_concerns: Optional[str] = ""
+    goals: Optional[str] = ""
+    medical_history: Optional[str] = ""
+    consent: bool = False
+
+
+class ContentBlockIn(BaseModel):
+    key: str
+    value: str
+
+
+# ---------------- Stripe Helpers ----------------
+def get_stripe_key():
+    api_key = os.environ.get("STRIPE_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Payments are not configured.")
+    return api_key
+
+
+def _emergent_stripe():
+    """Return (StripeCheckout, CheckoutSessionRequest) if the Emergent library is
+    available (Emergent-hosted preview), otherwise (None, None) so callers fall
+    back to the official `stripe` SDK (self-hosted / VPS)."""
+    try:
+        from emergentintegrations.payments.stripe.checkout import (
+            StripeCheckout,
+            CheckoutSessionRequest,
+        )
+        return StripeCheckout, CheckoutSessionRequest
+    except Exception:
+        return None, None
+
+
+async def _create_session(name, amount, currency, success_url, cancel_url, metadata, webhook_url):
+    key = get_stripe_key()
+    SC, CSR = _emergent_stripe()
+    if SC:
+        stripe = SC(api_key=key, webhook_url=webhook_url)
+        session = await stripe.create_checkout_session(CSR(
+            amount=float(amount), currency=currency,
+            success_url=success_url, cancel_url=cancel_url, metadata=metadata,
+        ))
+        return session.session_id, session.url
+    import stripe as stripe_sdk
+    stripe_sdk.api_key = key
+    s = stripe_sdk.checkout.Session.create(
+        mode="payment",
+        line_items=[{
+            "price_data": {
+                "currency": currency,
+                "product_data": {"name": name},
+                "unit_amount": int(round(float(amount) * 100)),
+            },
+            "quantity": 1,
+        }],
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata=metadata,
+    )
+    return s.id, s.url
+
+
+# ---------------- Membership Checkout ----------------
+@api_router.post("/checkout/membership")
+async def create_membership_checkout(payload: MembershipCheckoutIn, request: Request, user: dict = Depends(get_current_user)):
+    plan = MEMBERSHIP_PLANS.get(payload.plan_id)
+    if not plan:
+        raise HTTPException(status_code=400, detail="Unknown plan.")
+    origin = payload.origin_url.rstrip("/")
+    success_url = f"{origin}/membership/success?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{origin}/membership/cancel?session_id={{CHECKOUT_SESSION_ID}}"
+
+    kind = "membership" if plan["recurring"] else "package"
+    metadata = {"kind": kind, "plan_id": payload.plan_id, "user_id": user["id"]}
+    session_id, session_url = await _create_session(
+        plan.get("name", "CLA Membership"),
+        float(plan["amount"]), "usd", success_url, cancel_url, metadata,
+        f"{origin}/api/webhook/stripe",
+    )
+
+    await db.payment_transactions.insert_one({
+        "id": str(uuid.uuid4()),
+        "session_id": session_id,
+        "user_id": user["id"],
+        "email": user["email"],
+        "kind": kind,
+        "plan_id": payload.plan_id,
+        "amount": float(plan["amount"]),
+        "currency": "usd",
+        "status": "open",
+        "payment_status": "pending",
+        "metadata": metadata,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"session_id": session_id, "url": session_url}
+
+
+@api_router.get("/checkout/status/{session_id}")
+async def checkout_status(session_id: str, request: Request, user: dict = Depends(get_current_user)):
+    tx = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found.")
+    if tx.get("user_id") != user["id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not allowed.")
+
+    # If already finalised, return cached
+    if tx.get("payment_status") in {"paid", "expired", "failed"} and tx.get("processed"):
+        return {"status": tx.get("status"), "payment_status": tx.get("payment_status"), "amount_total": int(tx.get("amount", 0) * 100), "currency": tx.get("currency", "usd")}
+
+    origin = str(request.base_url).rstrip("/")
+    key = get_stripe_key()
+    SC, _ = _emergent_stripe()
+
+    try:
+        if SC:
+            stripe = SC(api_key=key, webhook_url=f"{origin}/api/webhook/stripe")
+            status_resp = await stripe.get_checkout_status(session_id)
+            resp_status = status_resp.status
+            resp_payment_status = status_resp.payment_status
+            resp_amount = status_resp.amount_total
+            resp_currency = status_resp.currency
+            resp_metadata = status_resp.metadata if isinstance(status_resp.metadata, dict) else dict(status_resp.metadata or {})
+        else:
+            import stripe as stripe_sdk
+            stripe_sdk.api_key = key
+            s = stripe_sdk.checkout.Session.retrieve(session_id)
+            resp_status = s.status
+            resp_payment_status = s.payment_status
+            resp_amount = s.amount_total
+            resp_currency = s.currency
+            resp_metadata = dict(s.metadata or {})
+    except Exception as e:
+        logger.warning(f"Stripe status lookup fell back to cache for {session_id}: {e}")
+        resp_status = tx.get("status") or "open"
+        resp_payment_status = tx.get("payment_status") or "pending"
+        resp_amount = int(float(tx.get("amount", 0)) * 100)
+        resp_currency = tx.get("currency", "usd")
+        resp_metadata = tx.get("metadata", {})
+
+    update = {
+        "status": resp_status,
+        "payment_status": resp_payment_status,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # If paid and not yet processed, finalise side effects exactly once
+    if resp_payment_status == "paid" and not tx.get("processed"):
+        update["processed"] = True
+        kind = tx.get("kind")
+        if kind == "booking_deposit" and tx.get("booking_id"):
+            await db.bookings.update_one({"id": tx["booking_id"]}, {"$set": {"status": "confirmed", "deposit_paid": True}})
+        elif kind == "membership":
+            now = datetime.now(timezone.utc)
+            await db.subscriptions.update_one(
+                {"user_id": tx["user_id"], "plan_id": tx.get("plan_id")},
+                {"$set": {
+                    "user_id": tx["user_id"],
+                    "email": tx.get("email", ""),
+                    "plan_id": tx.get("plan_id"),
+                    "status": "active",
+                    "amount": tx.get("amount", 0),
+                    "started_at": now.isoformat(),
+                    "current_period_end": (now + timedelta(days=30)).isoformat(),
+                }},
+                upsert=True,
+            )
+        elif kind == "package":
+            pass
+
+    await db.payment_transactions.update_one({"session_id": session_id}, {"$set": update})
+
+    return {
+        "status": resp_status,
+        "payment_status": resp_payment_status,
+        "amount_total": resp_amount,
+        "currency": resp_currency,
+        "metadata": resp_metadata,
+    }
+
+
+@api_router.post("/webhook/stripe")
+async def stripe_webhook(request: Request):
+    body = await request.body()
+    sig = request.headers.get("Stripe-Signature", "")
+    origin = str(request.base_url).rstrip("/")
+    key = get_stripe_key()
+    SC, _ = _emergent_stripe()
+
+    if SC:
+        stripe = SC(api_key=key, webhook_url=f"{origin}/api/webhook/stripe")
+        try:
+            evt = await stripe.handle_webhook(body, sig)
+        except Exception as e:
+            logger.warning(f"Stripe webhook verification failed: {e}")
+            raise HTTPException(status_code=400, detail="Invalid webhook")
+        session_id = evt.session_id
+        payment_status = evt.payment_status
+    else:
+        import stripe as stripe_sdk
+        stripe_sdk.api_key = key
+        secret = os.environ.get("STRIPE_WEBHOOK_SECRET")
+        try:
+            if secret:
+                event = stripe_sdk.Webhook.construct_event(body, sig, secret)
+            else:
+                import json as _json
+                event = _json.loads(body)
+        except Exception as e:
+            logger.warning(f"Stripe webhook verification failed: {e}")
+            raise HTTPException(status_code=400, detail="Invalid webhook")
+        etype = event["type"] if isinstance(event, dict) else event.type
+        if etype != "checkout.session.completed":
+            return {"ok": True}
+        obj = event["data"]["object"] if isinstance(event, dict) else event.data.object
+        session_id = obj.get("id") if isinstance(obj, dict) else obj.id
+        payment_status = obj.get("payment_status") if isinstance(obj, dict) else obj.payment_status
+
+    tx = await db.payment_transactions.find_one({"session_id": session_id})
+    if tx and not tx.get("processed") and payment_status == "paid":
+        kind = tx.get("kind")
+        if kind == "booking_deposit" and tx.get("booking_id"):
+            await db.bookings.update_one({"id": tx["booking_id"]}, {"$set": {"status": "confirmed", "deposit_paid": True}})
+        elif kind == "membership":
+            now = datetime.now(timezone.utc)
+            await db.subscriptions.update_one(
+                {"user_id": tx["user_id"], "plan_id": tx.get("plan_id")},
+                {"$set": {
+                    "user_id": tx["user_id"],
+                    "email": tx.get("email", ""),
+                    "plan_id": tx.get("plan_id"),
+                    "status": "active",
+                    "amount": tx.get("amount", 0),
+                    "started_at": now.isoformat(),
+                    "current_period_end": (now + timedelta(days=30)).isoformat(),
+                }},
+                upsert=True,
+            )
+        await db.payment_transactions.update_one(
+            {"session_id": session_id},
+            {"$set": {"processed": True, "payment_status": payment_status}},
+        )
+    return {"ok": True}
+
+
+# ---------------- Payments / Invoices ----------------
+@api_router.get("/payments/mine")
+async def my_payments(user: dict = Depends(get_current_user)):
+    cur = db.payment_transactions.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1)
+    return {"payments": [p async for p in cur]}
+
+
+@api_router.get("/payments")
+async def admin_payments(_: dict = Depends(require_admin)):
+    cur = db.payment_transactions.find({}, {"_id": 0}).sort("created_at", -1)
+    return {"payments": [p async for p in cur]}
+
+
+@api_router.get("/admin/payments")
+async def admin_payments_alias(_: dict = Depends(require_admin)):
+    cur = db.payment_transactions.find({}, {"_id": 0}).sort("created_at", -1)
+    return {"payments": [p async for p in cur]}
+
+
+@api_router.post("/admin/payments/{tx_id}/refund")
+async def admin_refund(tx_id: str, _: dict = Depends(require_admin)):
+    # Mock refund — in production, would call Stripe Refunds API
+    res = await db.payment_transactions.update_one(
+        {"id": tx_id, "payment_status": "paid"},
+        {"$set": {"payment_status": "refunded", "refunded_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    if res.modified_count == 0:
+        raise HTTPException(status_code=400, detail="No paid transaction to refund.")
+    return {"ok": True}
+
+
+# ---------------- Subscriptions ----------------
+@api_router.get("/subscriptions/mine")
+async def my_subscription(user: dict = Depends(get_current_user)):
+    cur = db.subscriptions.find({"user_id": user["id"]}, {"_id": 0}).sort("started_at", -1)
+    subs = [s async for s in cur]
+    return {"subscriptions": subs}
+
+
+@api_router.post("/subscriptions/{sub_id}/cancel")
+async def cancel_my_subscription(sub_id: str, user: dict = Depends(get_current_user)):
+    sub = await db.subscriptions.find_one({"id": sub_id}, {"_id": 0})
+    if not sub:
+        # accept lookup by user+plan if id mismatch
+        sub = await db.subscriptions.find_one({"user_id": user["id"], "plan_id": sub_id}, {"_id": 0})
+    if not sub or (sub.get("user_id") != user["id"] and user.get("role") != "admin"):
+        raise HTTPException(status_code=404, detail="Subscription not found.")
+    await db.subscriptions.update_one(
+        {"user_id": sub["user_id"], "plan_id": sub["plan_id"]},
+        {"$set": {"status": "cancelled", "cancelled_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"ok": True}
+
+
+@api_router.get("/subscriptions")
+async def admin_subscriptions(_: dict = Depends(require_admin)):
+    cur = db.subscriptions.find({}, {"_id": 0}).sort("started_at", -1)
+    return {"subscriptions": [s async for s in cur]}
+
+
+# ---------------- Intake Form ----------------
+@api_router.put("/intake/mine")
+async def save_intake(payload: IntakeIn, user: dict = Depends(get_current_user)):
+    doc = payload.model_dump()
+    doc["user_id"] = user["id"]
+    doc["email"] = user["email"]
+    doc["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.intakes.update_one({"user_id": user["id"]}, {"$set": doc}, upsert=True)
+    return {"ok": True}
+
+
+@api_router.get("/intake/mine")
+async def get_intake(user: dict = Depends(get_current_user)):
+    doc = await db.intakes.find_one({"user_id": user["id"]}, {"_id": 0})
+    return doc or {}
+
+
+@api_router.get("/admin/intake/{user_id}")
+async def admin_get_intake(user_id: str, _: dict = Depends(require_admin)):
+    doc = await db.intakes.find_one({"user_id": user_id}, {"_id": 0})
+    return doc or {}
+
+
+# ---------------- Admin: Clients Directory ----------------
+@api_router.get("/admin/clients")
+async def admin_clients(_: dict = Depends(require_admin)):
+    users = await db.users.find({"role": "client"}, {"_id": 0, "password_hash": 0}).to_list(2000)
+    out = []
+    for u in users:
+        bookings = await db.bookings.count_documents({"$or": [{"user_id": u["id"]}, {"email": u["email"]}]})
+        last_booking = await db.bookings.find_one({"$or": [{"user_id": u["id"]}, {"email": u["email"]}]}, {"_id": 0}, sort=[("created_at", -1)])
+        paid = await db.payment_transactions.aggregate([
+            {"$match": {"user_id": u["id"], "payment_status": "paid"}},
+            {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
+        ]).to_list(1)
+        lifetime = paid[0]["total"] if paid else 0
+        sub = await db.subscriptions.find_one({"user_id": u["id"], "status": "active"}, {"_id": 0})
+        out.append({
+            **u,
+            "total_bookings": bookings,
+            "last_booking": last_booking.get("date") if last_booking else None,
+            "lifetime_value": round(float(lifetime), 2),
+            "active_membership": sub.get("plan_id") if sub else None,
+        })
+    out.sort(key=lambda c: c.get("lifetime_value", 0), reverse=True)
+    return {"clients": out}
+
+
+# ---------------- Admin: Revenue Dashboard ----------------
+@api_router.get("/admin/revenue")
+async def admin_revenue(_: dict = Depends(require_admin)):
+    now = datetime.now(timezone.utc)
+    start_today = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    start_week = (now - timedelta(days=7)).isoformat()
+    start_month = (now - timedelta(days=30)).isoformat()
+
+    async def total(match):
+        agg = await db.payment_transactions.aggregate([
+            {"$match": {**match, "payment_status": "paid"}},
+            {"$group": {"_id": None, "total": {"$sum": "$amount"}, "count": {"$sum": 1}}},
+        ]).to_list(1)
+        return {"total": round(float(agg[0]["total"]), 2) if agg else 0, "count": agg[0]["count"] if agg else 0}
+
+    today = await total({"created_at": {"$gte": start_today}})
+    week = await total({"created_at": {"$gte": start_week}})
+    month = await total({"created_at": {"$gte": start_month}})
+    all_time = await total({})
+
+    # Breakdown by service for the month
+    by_service_agg = await db.payment_transactions.aggregate([
+        {"$match": {"payment_status": "paid", "kind": "booking_deposit", "created_at": {"$gte": start_month}}},
+        {"$group": {"_id": "$metadata.service", "total": {"$sum": "$amount"}, "count": {"$sum": 1}}},
+        {"$sort": {"total": -1}},
+    ]).to_list(20)
+
+    active_subs = await db.subscriptions.count_documents({"status": "active"})
+    mrr_agg = await db.subscriptions.aggregate([
+        {"$match": {"status": "active"}},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
+    ]).to_list(1)
+    mrr = round(float(mrr_agg[0]["total"]), 2) if mrr_agg else 0
+
+    return {
+        "today": today,
+        "week": week,
+        "month": month,
+        "all_time": all_time,
+        "by_service": [{"service": x["_id"] or "Unknown", "total": round(float(x["total"]), 2), "count": x["count"]} for x in by_service_agg],
+        "active_subscriptions": active_subs,
+        "mrr": mrr,
+    }
+
+
+
+# ============================================================
+# ============ NEWS & OFFERS MANAGER ==========================
+# ============================================================
+class NewsIn(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    summary: Optional[str] = ""
+    body: Optional[str] = ""
+    image_url: Optional[str] = ""
+    tag: Optional[str] = ""  # e.g. "News", "Event"
+    published: bool = True
+
+
+class OfferIn(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    description: Optional[str] = ""
+    cta_label: Optional[str] = "Learn more"
+    cta_url: Optional[str] = ""
+    banner_image_url: Optional[str] = ""
+    accent_color: Optional[str] = "#D4AF37"
+    starts_at: Optional[str] = None  # ISO date/time
+    ends_at: Optional[str] = None    # ISO date/time
+    active: bool = True
+    show_banner: bool = True  # If true, appears as top-of-site banner
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _is_within(offer: dict) -> bool:
+    if not offer.get("active"):
+        return False
+    now = datetime.now(timezone.utc)
+    try:
+        if offer.get("starts_at"):
+            if datetime.fromisoformat(offer["starts_at"].replace("Z", "+00:00")) > now:
+                return False
+        if offer.get("ends_at"):
+            if datetime.fromisoformat(offer["ends_at"].replace("Z", "+00:00")) < now:
+                return False
+    except Exception:
+        return offer.get("active", False)
+    return True
+
+
+# ---- Public: news ----
+@api_router.get("/news")
+async def list_news():
+    cur = db.news.find({"published": True}, {"_id": 0}).sort("created_at", -1).limit(30)
+    return {"items": [n async for n in cur]}
+
+
+# ---- Public: offers ----
+@api_router.get("/offers")
+async def list_offers():
+    cur = db.offers.find({}, {"_id": 0}).sort("created_at", -1)
+    all_offers = [o async for o in cur]
+    live = [o for o in all_offers if _is_within(o)]
+    return {"items": live}
+
+
+@api_router.get("/offers/banner")
+async def active_banner():
+    cur = db.offers.find({"show_banner": True}, {"_id": 0}).sort("created_at", -1)
+    all_offers = [o async for o in cur]
+    live = [o for o in all_offers if _is_within(o)]
+    return {"offer": live[0] if live else None}
+
+
+# ---- Admin: news CRUD ----
+@api_router.get("/admin/news")
+async def admin_list_news(_: dict = Depends(require_admin)):
+    cur = db.news.find({}, {"_id": 0}).sort("created_at", -1)
+    return {"items": [n async for n in cur]}
+
+
+@api_router.post("/admin/news")
+async def admin_create_news(payload: NewsIn, _: dict = Depends(require_admin)):
+    doc = payload.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = _now_iso()
+    doc["updated_at"] = doc["created_at"]
+    await db.news.insert_one(doc.copy())
+    doc.pop("_id", None)
+    return {"ok": True, "item": doc}
+
+
+@api_router.put("/admin/news/{news_id}")
+async def admin_update_news(news_id: str, payload: NewsIn, _: dict = Depends(require_admin)):
+    update = payload.model_dump()
+    update["updated_at"] = _now_iso()
+    res = await db.news.update_one({"id": news_id}, {"$set": update})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="News item not found.")
+    return {"ok": True}
+
+
+@api_router.delete("/admin/news/{news_id}")
+async def admin_delete_news(news_id: str, _: dict = Depends(require_admin)):
+    res = await db.news.delete_one({"id": news_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="News item not found.")
+    return {"ok": True}
+
+
+# ---- Admin: offers CRUD ----
+@api_router.get("/admin/offers")
+async def admin_list_offers(_: dict = Depends(require_admin)):
+    cur = db.offers.find({}, {"_id": 0}).sort("created_at", -1)
+    return {"items": [o async for o in cur]}
+
+
+@api_router.post("/admin/offers")
+async def admin_create_offer(payload: OfferIn, _: dict = Depends(require_admin)):
+    doc = payload.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = _now_iso()
+    doc["updated_at"] = doc["created_at"]
+    await db.offers.insert_one(doc.copy())
+    doc.pop("_id", None)
+    return {"ok": True, "item": doc}
+
+
+@api_router.put("/admin/offers/{offer_id}")
+async def admin_update_offer(offer_id: str, payload: OfferIn, _: dict = Depends(require_admin)):
+    update = payload.model_dump()
+    update["updated_at"] = _now_iso()
+    res = await db.offers.update_one({"id": offer_id}, {"$set": update})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Offer not found.")
+    return {"ok": True}
+
+
+@api_router.delete("/admin/offers/{offer_id}")
+async def admin_delete_offer(offer_id: str, _: dict = Depends(require_admin)):
+    res = await db.offers.delete_one({"id": offer_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Offer not found.")
+    return {"ok": True}
+
+
+
+# ---------------- Content CMS ----------------
+DEFAULT_CONTENT = {
+    # Branding / global images
+    "brand.logo_url": "https://customer-assets.emergentagent.com/job_cinthia-spa/artifacts/9tpekrrz_image.png",
+    "brand.hero_bg_url": "https://customer-assets-jai6qajn.emergentagent.net/job_beauty-reserve-155/artifacts/qdhwfadp_8ca8321d-6caa-402f-9a3c-637e3e897444.png",
+    "brand.founder_image_url": "https://images.unsplash.com/photo-1733685372441-c3a2a6e3222c?crop=entropy&cs=srgb&fm=jpg&q=85",
+    "brand.about_image_url": "https://customer-assets-jai6qajn.emergentagent.net/job_beauty-reserve-155/artifacts/gge0hg88_WhatsApp%20Image%202026-06-02%20at%205.01.50%20AM.jpeg",
+    "brand.qr_url": "https://customer-assets.emergentagent.com/job_luxury-spa-preview-1/artifacts/uh5zkul7_qr-code.png",
+    "brand.studio_name": "CLA Aesthetics & Wellness",
+    "brand.tagline_short": "Enhancing your natural beauty",
+    "brand.phone": "516-620-9158",
+    "brand.phone_link": "+15166209158",
+    "brand.email": "cinthia@claaesthetics.com",
+    "brand.address": "1078 Grand Avenue, South Hempstead, NY 11550",
+    "brand.instagram": "https://instagram.com/CLAAesthetics",
+    "brand.facebook": "https://facebook.com/",
+    "brand.whatsapp": "https://wa.me/15166209158",
+    "brand.maps_query": "1078 Grand Avenue, South Hempstead, NY 11550",
+    "brand.booking_url": "",
+
+    # Hero
+    "hero.eyebrow": "South Hempstead, NY",
+    "hero.title_part1": "Elevate your",
+    "hero.title_part1_italic": "glow.",
+    "hero.title_part2": "Restore your",
+    "hero.title_part2_italic": "calm.",
+    "hero.subtitle": "A boutique medical-aesthetics studio led by Cinthia Lariviere Alexandre. Bespoke rituals, advanced injectables and quiet luxury — minutes from Long Island.",
+    "hero.cta_primary": "Book your session",
+    "hero.cta_secondary": "View services",
+    "hero.counter_to": "200",
+    "hero.counter_label": "5-star clients",
+    "hero.founder_signature": "With care,",
+    "hero.founder_name": "Cinthia",
+    "hero.founder_role": "Founder & CEO",
+
+    # Hero facility card (the image overlay on the right of the hero)
+    "hero.facility_signature": "Step inside.",
+    "hero.facility_title": "The CLA Studio",
+    "hero.facility_subtitle": "South Hempstead, NY",
+    "brand.hero_facility_image_url": "",
+
+    # Team / staff section
+    "team.eyebrow": "The team",
+    "team.title": "Meet the hands behind your glow.",
+    "team.title_italic": "hands",
+    "team.lede": "A small, dedicated team of specialists — each chosen for their craft, warmth and precision.",
+
+    # Contact — opening hours (one row per line, format: Label|Value)
+    "contact.hours_title": "Hours",
+    "contact.hours": "Monday – Friday|10:00 AM – 8:00 PM\nSaturday|9:00 AM – 6:00 PM\nSunday|By appointment",
+
+    # About
+    "about.eyebrow": "Our story",
+    "about.title": "Quiet luxury, remarkable results.",
+    "about.title_italic": "remarkable",
+    "about.body": "CLA Aesthetics & Wellness was built on a simple belief: refinement should feel personal. Each visit begins with listening — to your goals, your skin, your story — before any treatment touches your skin.",
+    "about.body2": "From precision injectables to restorative wellness, every ritual is curated by Cinthia herself in a private, calming studio just minutes from Long Island.",
+    "about.highlight1_title": "Certified Esthetician",
+    "about.highlight1_body": "Trained in advanced injectable and skin rejuvenation protocols.",
+    "about.highlight2_title": "10+ years of care",
+    "about.highlight2_body": "A trusted hand and an attentive eye for every face we touch.",
+    "about.highlight3_title": "Bespoke results",
+    "about.highlight3_body": "Every plan is tailored — never templated. Subtle, refined, you.",
+
+    # Treatments header
+    "treatments.eyebrow": "Treatments",
+    "treatments.title": "Signature rituals, artfully performed.",
+    "treatments.title_italic": "artfully",
+    "treatments.lede": "A curated menu of medical-aesthetic and wellness treatments, every one calibrated to your face, your goals and your day.",
+    "treatments.menu_header": "LUXURY TREATMENT AND WELLNESS",
+    "treatments.col_luxury_title": "Luxury",
+    "treatments.col_wellness_title": "Wellness",
+    "treatments.subtitle": "Modern Luxury, Refined Results",
+    "treatments.closing": "Enhancing Your Natural Beauty",
+    "treatments.tagline": "with precision & care",
+    "treatments.cta": "Book your appointment today",
+
+    # Gallery
+    "gallery.eyebrow": "Portfolio",
+    "gallery.title": "Moments of light & texture.",
+    "gallery.title_italic": "light",
+
+    # Testimonials header
+    "testimonials.eyebrow": "Voices",
+
+    # Offers
+    "offers.eyebrow": "Offers",
+    "offers.title": "Thoughtfully curated rituals.",
+    "offers.title_italic": "curated",
+
+    # Booking section
+    "booking.eyebrow": "Book your visit",
+    "booking.title": "We've been waiting for you.",
+    "booking.title_italic": "waiting",
+    "booking.lede": "Reserve a private consultation or treatment. We'll confirm and send all the gentle reminders.",
+    "booking.qr_eyebrow": "Scan to book",
+    "booking.qr_title": "From phone to glow.",
+    "booking.qr_title_italic": "glow.",
+    "booking.qr_subtitle": "Point your camera here.",
+
+    # Footer
+    "footer.tagline": "Enhancing your natural beauty",
+    "footer.body": "A boutique studio in South Hempstead, NY led by Cinthia Lariviere Alexandre — combining advanced aesthetics with quiet, considered hospitality.",
+    "footer.hours_block": "Mon–Fri 10am–8pm\nSat 9am–6pm\nSun by appointment",
+    "footer.copyright": "CLA Aesthetics & Wellness. All rights reserved.",
+
+    # Legal & policy long-form pages
+    "privacy.body": (
+        "**Effective date:** {today}\n\n"
+        "CLA Aesthetics & Wellness (\"CLA\", \"we\", \"us\", \"our\") operates https://cla-wellness.com and the connected booking/portal experience. "
+        "This Privacy Policy explains what information we collect, how we use it, and the choices you have. "
+        "We comply with applicable U.S. privacy laws including, where relevant, HIPAA standards for medical information and New York State consumer-privacy protections.\n\n"
+        "**1. Information we collect**\n"
+        "• Identity & contact details — name, email, phone, address.\n"
+        "• Booking details — service, date, time, notes you share with us.\n"
+        "• Medical intake — date of birth, medications, allergies, pregnancy status, skin concerns and consent (used only to deliver safe treatments).\n"
+        "• Payment details — handled by our PCI-compliant processor (Stripe). We never see or store your full card number or CVC.\n"
+        "• Usage data — pages visited, device and approximate location (for security and product analytics).\n\n"
+        "**2. How we use your information**\n"
+        "• To schedule, confirm and deliver your treatments.\n"
+        "• To contact you about appointments, follow-ups, recalls and aftercare.\n"
+        "• To process payments and issue refunds where applicable.\n"
+        "• To comply with legal, tax and medical record-keeping obligations.\n"
+        "• To send marketing communications you have opted into — you may unsubscribe at any time.\n\n"
+        "**3. Sharing & disclosure**\n"
+        "We never sell your personal information. We share it only with:\n"
+        "• Service providers acting on our behalf (e.g. Stripe for payments, our SMTP provider for confirmations, our cloud hosting).\n"
+        "• Health-care professionals involved in your care.\n"
+        "• Authorities when required by law (subpoena, court order or as needed to protect rights and safety).\n\n"
+        "**4. Data retention**\n"
+        "Medical records are kept for the minimum period required by applicable law. Booking and account data is retained while your account is active and for a reasonable period after closure for legal and accounting purposes.\n\n"
+        "**5. Security**\n"
+        "We use TLS in transit, encrypted databases at rest, role-based access and httpOnly secure cookies for authentication. No system is 100% secure — please use a unique password and notify us promptly of suspicious activity.\n\n"
+        "**6. Your rights**\n"
+        "You may request: access to your data, correction of inaccuracies, deletion (subject to medical retention laws), restriction of processing, data portability, and to opt out of marketing. Submit any request to cinthia@claaesthetics.com.\n\n"
+        "**7. Cookies**\n"
+        "We use strictly-necessary cookies for sign-in and booking, and limited analytics cookies. See our Cookie Policy for details.\n\n"
+        "**8. Children**\n"
+        "Our services are not directed to children under 18. We do not knowingly collect personal information from minors without parental consent.\n\n"
+        "**9. Changes to this policy**\n"
+        "We may update this policy as our practice evolves. The \"Effective date\" above reflects the latest version. Material changes will be highlighted on this page.\n\n"
+        "**10. Contact**\n"
+        "Questions or requests? Reach Cinthia Lariviere Alexandre at cinthia@claaesthetics.com · 516-620-9158 · 1078 Grand Avenue, South Hempstead, NY 11550."
+    ),
+    "terms.body": (
+        "**Effective date:** {today}\n\n"
+        "These Terms govern your use of https://cla-wellness.com and any treatment booked with CLA Aesthetics & Wellness. By creating an account, booking, or paying a deposit you agree to these Terms.\n\n"
+        "**1. Treatments & consultation**\n"
+        "All medical-aesthetic treatments require a pre-treatment consultation. We reserve the right to decline or postpone any treatment that is not medically appropriate. Results vary by individual; no specific outcome is guaranteed.\n\n"
+        "**2. Deposits & payments**\n"
+        "A non-refundable deposit is required to reserve every appointment. The deposit is applied to your service total. Remaining balances are settled in-studio by card or contactless payment.\n\n"
+        "**3. Cancellation, rescheduling & no-shows**\n"
+        "• 24+ hours before your appointment — reschedule with no charge.\n"
+        "• Less than 24 hours — deposit is forfeited.\n"
+        "• No-shows — deposit forfeited and may affect future booking eligibility.\n"
+        "See our Refund & Cancellation Policy for full detail.\n\n"
+        "**4. Memberships**\n"
+        "Memberships renew automatically on your renewal date until cancelled. Cancel anytime from your portal or by contacting us — no early-termination fee. Cancellations take effect at the end of the current billing period.\n\n"
+        "**5. Account responsibility**\n"
+        "You are responsible for keeping your login credentials confidential and for activity that occurs under your account. Notify us immediately of any unauthorised access.\n\n"
+        "**6. Acceptable use**\n"
+        "You agree not to misuse the website, attempt to disrupt our services, or submit false health information that could endanger your or others' safety.\n\n"
+        "**7. Intellectual property**\n"
+        "All site content, logos, text, images and treatment protocols are the property of CLA Aesthetics & Wellness or our licensors and are protected by U.S. and international IP laws.\n\n"
+        "**8. Limitation of liability**\n"
+        "To the maximum extent permitted by law, our aggregate liability for any claim arising out of your use of the website or services is limited to the amount you paid us in the preceding twelve (12) months. We are not liable for indirect, incidental or consequential damages.\n\n"
+        "**9. Governing law**\n"
+        "These Terms are governed by the laws of the State of New York, without regard to its conflicts-of-law principles. Any disputes will be resolved in courts located in Nassau County, NY.\n\n"
+        "**10. Contact**\n"
+        "cinthia@claaesthetics.com · 516-620-9158 · 1078 Grand Avenue, South Hempstead, NY 11550."
+    ),
+    "refund.body": (
+        "**Effective date:** {today}\n\n"
+        "We want every visit to feel intentional. Our refund and cancellation policy is designed to be fair to you and to the practitioners reserving the time.\n\n"
+        "**Deposits**\n"
+        "All bookings require a non-refundable deposit, which is applied to the cost of your service on the day of treatment.\n\n"
+        "**Cancellations & rescheduling**\n"
+        "• More than 24 hours before your appointment — reschedule freely, no charge.\n"
+        "• Within 24 hours — your deposit is forfeited; you may rebook by placing a new deposit.\n"
+        "• No-shows — deposit is forfeited and we may require pre-payment in full for future bookings.\n\n"
+        "**Memberships**\n"
+        "Glow Membership renews monthly until cancelled. You can cancel anytime from your portal — your membership stays active until the end of the current billing period. No partial-month refunds.\n\n"
+        "**Refunds**\n"
+        "Refunds on completed treatments are generally not provided, as results vary by individual. If something went wrong, please contact Cinthia within 7 days — we will assess on a case-by-case basis and may offer a complimentary touch-up where clinically appropriate.\n\n"
+        "**Packages**\n"
+        "Pre-paid packages (e.g. 3-session hair restoration) are non-refundable but are transferable to immediate family members with prior approval.\n\n"
+        "**How to request**\n"
+        "Email cinthia@claaesthetics.com with your booking ID and concern. We respond within 2 business days."
+    ),
+    "cookies.body": (
+        "**Effective date:** {today}\n\n"
+        "https://cla-wellness.com uses a small number of cookies to make the experience secure and pleasant.\n\n"
+        "**Strictly necessary**\n"
+        "• Authentication cookies (`access_token`, `refresh_token`) — keep you signed in. We cannot offer the portal or booking without these.\n"
+        "• CSRF / session cookies — protect form submissions from abuse.\n\n"
+        "**Functional**\n"
+        "• `cla_prefill`, `cla_service` — remember the slot or service you've selected so you don't have to re-enter on the booking form.\n"
+        "• `cla_camille_seen` — ensures the Camille concierge greeting only opens once per session.\n\n"
+        "**Analytics**\n"
+        "We may use anonymised analytics (e.g. PostHog) to understand how the site is used and to improve it. No personally identifying data is sold or shared with advertisers.\n\n"
+        "**Payments**\n"
+        "Stripe sets its own cookies during checkout to detect and prevent fraud. See Stripe's privacy policy for details.\n\n"
+        "**Your choices**\n"
+        "You can clear cookies in your browser at any time. Disabling strictly-necessary cookies will prevent sign-in and bookings from working. Contact cinthia@claaesthetics.com with any questions."
+    ),
+    "medical_disclaimer.body": (
+        "**Effective date:** {today}\n\n"
+        "The content on https://cla-wellness.com is for informational purposes only. It is not medical advice and is not a substitute for in-person consultation with a licensed health-care professional.\n\n"
+        "**Treatment results vary.** Every individual responds differently. Photographs, testimonials and descriptions are illustrative — they do not guarantee identical outcomes for you.\n\n"
+        "**Always disclose** medications, allergies, prior treatments, pregnancy and major medical conditions during your intake. We may decline or postpone any treatment that is not medically appropriate for your circumstances.\n\n"
+        "**Aftercare matters.** Following the post-treatment instructions provided to you protects results and reduces risk of complication. Contact us promptly if anything feels unusual.\n\n"
+        "**In an emergency** — do not contact us first. Call 911 or attend your nearest emergency department.\n\n"
+        "For non-urgent clinical questions: cinthia@claaesthetics.com · 516-620-9158."
+    ),
+    "accessibility.body": (
+        "**Effective date:** {today}\n\n"
+        "CLA Aesthetics & Wellness is committed to digital and physical accessibility for guests of all abilities.\n\n"
+        "**Digital**\n"
+        "https://cla-wellness.com is designed to align with WCAG 2.1 AA where possible. We continuously test for keyboard navigation, screen-reader landmarks, sufficient colour contrast and reduced-motion preferences.\n\n"
+        "**At the studio**\n"
+        "Our South Hempstead studio offers level entry and a quiet, calming environment. If you have specific accessibility needs (mobility, hearing, sensory or otherwise) please tell us in advance and we will adapt your visit.\n\n"
+        "**Feedback**\n"
+        "If you encounter a barrier on this site or at the studio, please email cinthia@claaesthetics.com or call 516-620-9158. We aim to respond within 2 business days and to remediate promptly.\n\n"
+        "Last accessibility review: ongoing — quarterly internal audits and on-demand fixes."
+    ),
+    "contact.body": (
+        "**Visit us**\n"
+        "1078 Grand Avenue, South Hempstead, NY 11550\n\n"
+        "**Hours**\n"
+        "Monday–Friday · 10:00 AM – 8:00 PM\n"
+        "Saturday · 9:00 AM – 6:00 PM\n"
+        "Sunday · by appointment\n\n"
+        "**Reach Cinthia**\n"
+        "Phone · 516-620-9158\n"
+        "Email · cinthia@claaesthetics.com\n"
+        "Instagram · @CLAAesthetics\n\n"
+        "For booking and rescheduling, the fastest route is our online booking. For anything that needs a human, just call or message — we read everything."
+    ),
+}
+
+
+@api_router.get("/content")
+async def get_content():
+    docs = await db.content.find({}, {"_id": 0}).to_list(500)
+    result = dict(DEFAULT_CONTENT)
+    for d in docs:
+        result[d["key"]] = d["value"]
+    return result
+
+
+@api_router.put("/admin/content")
+async def update_content(payload: ContentBlockIn, _: dict = Depends(require_admin)):
+    await db.content.update_one(
+        {"key": payload.key},
+        {"$set": {"key": payload.key, "value": payload.value, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    return {"ok": True}
+
+
+@api_router.post("/admin/content/reset")
+async def reset_content(_: dict = Depends(require_admin)):
+    await db.content.delete_many({})
+    return {"ok": True}
+
+
+# ============================================================
+# ============ SITE EDITOR — CMS COLLECTIONS ==================
+# ============================================================
+
+# Default seeds — loaded into Mongo on first startup if collections are empty.
+DEFAULT_TESTIMONIALS = [
+    {"id": "t1", "order": 1, "name": "Sophia M.", "text": "Walking into CLA is like exhaling. My skin has never looked this radiant — Cinthia genuinely listens and customizes everything.", "rating": 5},
+    {"id": "t2", "order": 2, "name": "Marisa L.", "text": "The most thoughtful, calming experience. The signature facial gave me a glow that lasted weeks. I cannot recommend it enough.", "rating": 5},
+    {"id": "t3", "order": 3, "name": "Eliana R.", "text": "Refined, elegant, attentive. Every detail is intentional. This is now my monthly ritual and a true gift to myself.", "rating": 5},
+    {"id": "t4", "order": 4, "name": "Camille S.", "text": "From the moment I sat down to the goodbye at the door — pure luxury. The deep tissue massage melted months of tension.", "rating": 5},
+]
+
+DEFAULT_PLANS = [
+    {"id": "first-visit", "order": 1, "badge": "New Client", "title": "First Visit Ritual", "price": "$120", "unit": "", "subtitle": "One-time · Save $25", "perks": ["30-min consult with Cinthia", "Signature facial", "Take-home serum"], "dark": False, "amount": 120.00, "recurring": False},
+    {"id": "glow", "order": 2, "badge": "Most Loved", "title": "Glow Membership", "price": "$129", "unit": "/mo", "subtitle": "Recurring · Cancel anytime", "perks": ["One facial each month", "15% off retail", "Member-only events", "Priority booking"], "dark": True, "amount": 129.00, "recurring": True},
+    {"id": "couples", "order": 3, "badge": "Limited", "title": "Couple's Retreat", "price": "$320", "unit": "", "subtitle": "One-time · For two", "perks": ["Side-by-side 60-min massage", "Champagne service", "Private suite"], "dark": False, "amount": 320.00, "recurring": False},
+]
+
+DEFAULT_GALLERY = [
+    {"id": "g1", "order": 1, "src": "https://images.unsplash.com/photo-1600334129128-685c5582fd35?auto=format&fit=crop&w=1200&q=80", "span": "lg:col-span-2 lg:row-span-2 h-[420px] lg:h-auto", "alt": "Treatment ritual"},
+    {"id": "g2", "order": 2, "src": "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=900&q=80", "span": "h-[260px]", "alt": "Warm candles"},
+    {"id": "g3", "order": 3, "src": "https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?auto=format&fit=crop&w=900&q=80", "span": "h-[260px]", "alt": "Botanical apothecary"},
+    {"id": "g4", "order": 4, "src": "https://images.unsplash.com/photo-1596178065887-1198b6148b2b?auto=format&fit=crop&w=900&q=80", "span": "h-[260px]", "alt": "Hands-on care"},
+    {"id": "g5", "order": 5, "src": "https://images.unsplash.com/photo-1544161515-4ab6ce6db874?auto=format&fit=crop&w=1200&q=80", "span": "lg:col-span-2 h-[260px]", "alt": "Restorative massage"},
+    {"id": "g6", "order": 6, "src": "https://images.unsplash.com/photo-1583416750470-965b2707b355?auto=format&fit=crop&w=900&q=80", "span": "h-[260px]", "alt": "Glow result"},
+]
+
+DEFAULT_TREATMENTS_MENU = [
+    {"id": "m1", "order": 1, "category": "luxury", "name": "Botox", "price": "From $12 / unit", "bullets": ["Smooth fine lines", "Results last 3–4 months"]},
+    {"id": "m2", "order": 2, "category": "luxury", "name": "Dermal Fillers", "price": "From $650 / syringe", "bullets": ["Enhance contours", "Natural volume"]},
+    {"id": "m3", "order": 3, "category": "luxury", "name": "PDO Thread Lift", "price": "From $800 / session", "bullets": ["Non-surgical lift", "Natural contours"]},
+    {"id": "m4", "order": 4, "category": "wellness", "name": "IV Nutrition Therapy", "price": "From $185", "bullets": ["Boost immunity", "Enhance energy", "Rapid hydration"]},
+    {"id": "m5", "order": 5, "category": "luxury", "name": "PRP Facial", "price": "From $450", "bullets": ["Collagen boost", "Radiant rejuvenation"]},
+    {"id": "m6", "order": 6, "category": "luxury", "name": "Laser Therapy", "price": "From $295", "bullets": ["Target imperfections", "Smoother, clearer skin"]},
+    {"id": "m7", "order": 7, "category": "luxury", "name": "PRF Treatment", "price": "From $500", "bullets": ["Advanced healing", "Natural glow"]},
+    {"id": "m8", "order": 8, "category": "luxury", "name": "Hydrofacial", "price": "From $250", "bullets": ["Deep cleansing", "Hydration boost", "Instant glow"]},
+    {"id": "m9", "order": 9, "category": "wellness", "name": "Hair Restoration", "price": "From $500 / session · 3-pack $1,350", "bullets": ["Fuller, thicker hair"]},
+    {"id": "m10", "order": 10, "category": "wellness", "name": "Weight Loss Program", "price": "From $299", "bullets": ["Customized plans", "Medical supervision"]},
+    {"id": "m11", "order": 11, "category": "luxury", "name": "Microneedling + PRP", "price": "From $400 / session", "bullets": ["Skin renewal", "Even tone"]},
+    {"id": "m12", "order": 12, "category": "luxury", "name": "Skin Rejuvenation", "price": "From $350", "bullets": ["Complete transformation", "Radiant results"]},
+]
+
+DEFAULT_HERO_IMAGES = [
+    {"id": "h1", "order": 1, "src": "https://images.unsplash.com/photo-1733685372441-c3a2a6e3222c?crop=entropy&cs=srgb&fm=jpg&q=85", "alt": "Cinthia, Founder & CEO"},
+]
+
+DEFAULT_TEAM = [
+    {"id": "tm1", "order": 1, "name": "Cinthia Lariviere Alexandre", "role": "Founder & Lead Aesthetician", "image": "https://customer-assets-jai6qajn.emergentagent.net/job_beauty-reserve-155/artifacts/gge0hg88_WhatsApp%20Image%202026-06-02%20at%205.01.50%20AM.jpeg", "bio": "Cinthia founded CLA on a simple belief: refinement should feel personal. With over a decade of experience in advanced injectables and skin rejuvenation, she curates every ritual herself."},
+]
+
+
+# ---------------- Public collection GETs ----------------
+@api_router.get("/testimonials")
+async def get_testimonials():
+    items = await db.testimonials.find({}, {"_id": 0}).sort("order", 1).to_list(200)
+    return {"testimonials": items or DEFAULT_TESTIMONIALS}
+
+
+@api_router.get("/plans")
+async def get_plans():
+    items = await db.plans.find({}, {"_id": 0}).sort("order", 1).to_list(50)
+    return {"plans": items or DEFAULT_PLANS}
+
+
+@api_router.get("/gallery")
+async def get_gallery():
+    items = await db.gallery.find({}, {"_id": 0}).sort("order", 1).to_list(200)
+    return {"gallery": items or DEFAULT_GALLERY}
+
+
+@api_router.get("/treatments-menu")
+async def get_treatments_menu():
+    items = await db.treatments_menu.find({}, {"_id": 0}).sort("order", 1).to_list(200)
+    return {"items": items or DEFAULT_TREATMENTS_MENU}
+
+
+@api_router.get("/hero-images")
+async def get_hero_images():
+    items = await db.hero_images.find({}, {"_id": 0}).sort("order", 1).to_list(50)
+    if items:
+        return {"images": items}
+    # Fallback: prefer the admin-managed facility image; if none, use static default
+    doc = await db.content.find_one({"key": "brand.hero_facility_image_url"}, {"_id": 0})
+    facility_url = (doc or {}).get("value") if doc else None
+    if facility_url:
+        return {"images": [{"id": "facility", "order": 1, "src": facility_url, "alt": "Inside the CLA Aesthetics studio"}]}
+    return {"images": DEFAULT_HERO_IMAGES}
+
+
+@api_router.get("/team")
+async def get_team():
+    items = await db.team.find({}, {"_id": 0}).sort("order", 1).to_list(100)
+    return {"team": items or DEFAULT_TEAM}
+
+
+# ---------------- Admin CRUD: generic helper ----------------
+def _coll_for(kind: str):
+    mapping = {
+        "services": db.services,
+        "testimonials": db.testimonials,
+        "plans": db.plans,
+        "gallery": db.gallery,
+        "treatments_menu": db.treatments_menu,
+        "hero_images": db.hero_images,
+        "team": db.team,
+    }
+    if kind not in mapping:
+        raise HTTPException(status_code=404, detail=f"Unknown collection: {kind}")
+    return mapping[kind]
+
+
+@api_router.get("/admin/cms/{kind}")
+async def admin_cms_list(kind: str, _: dict = Depends(require_admin)):
+    coll = _coll_for(kind)
+    items = await coll.find({}, {"_id": 0}).sort("order", 1).to_list(500)
+    # If empty, auto-persist defaults so admin CRUD (edit / delete / reorder) works immediately
+    if not items:
+        defaults = {
+            "services": SERVICES,
+            "testimonials": DEFAULT_TESTIMONIALS,
+            "plans": DEFAULT_PLANS,
+            "gallery": DEFAULT_GALLERY,
+            "treatments_menu": DEFAULT_TREATMENTS_MENU,
+            "hero_images": DEFAULT_HERO_IMAGES,
+            "team": DEFAULT_TEAM,
+        }
+        seed = defaults.get(kind, [])
+        if seed:
+            # Deep-copy so we don't mutate the module-level DEFAULT_* lists
+            import copy as _copy
+            seed_copy = _copy.deepcopy(seed)
+            for i, item in enumerate(seed_copy):
+                item.setdefault("id", str(uuid.uuid4()))
+                item.setdefault("order", i + 1)
+            await coll.insert_many([dict(x) for x in seed_copy])
+            items = await coll.find({}, {"_id": 0}).sort("order", 1).to_list(500)
+    return {"items": items}
+
+
+@api_router.post("/admin/cms/{kind}/seed")
+async def admin_cms_seed(kind: str, _: dict = Depends(require_admin)):
+    """Force-reseed defaults into the collection (clears existing entries)."""
+    coll = _coll_for(kind)
+    defaults = {
+        "services": SERVICES,
+        "testimonials": DEFAULT_TESTIMONIALS,
+        "plans": DEFAULT_PLANS,
+        "gallery": DEFAULT_GALLERY,
+        "treatments_menu": DEFAULT_TREATMENTS_MENU,
+        "hero_images": DEFAULT_HERO_IMAGES,
+        "team": DEFAULT_TEAM,
+    }
+    seed = defaults.get(kind, [])
+    await coll.delete_many({})
+    if seed:
+        # Ensure each item has an id and order
+        for i, item in enumerate(seed):
+            item.setdefault("id", str(uuid.uuid4()))
+            item.setdefault("order", i + 1)
+        await coll.insert_many([dict(x) for x in seed])
+    return {"ok": True, "count": len(seed)}
+
+
+@api_router.post("/admin/cms/{kind}")
+async def admin_cms_create(kind: str, item: dict, _: dict = Depends(require_admin)):
+    coll = _coll_for(kind)
+    item["id"] = item.get("id") or str(uuid.uuid4())
+    # Place at the end by default
+    count = await coll.count_documents({})
+    item.setdefault("order", count + 1)
+    await coll.insert_one(dict(item))
+    item.pop("_id", None)
+    return {"ok": True, "item": item}
+
+
+@api_router.put("/admin/cms/{kind}/{item_id}")
+async def admin_cms_update(kind: str, item_id: str, item: dict, _: dict = Depends(require_admin)):
+    coll = _coll_for(kind)
+    item.pop("_id", None)
+    item["id"] = item_id
+    res = await coll.update_one({"id": item_id}, {"$set": item}, upsert=True)
+    return {"ok": True, "matched": res.matched_count}
+
+
+@api_router.delete("/admin/cms/{kind}/{item_id}")
+async def admin_cms_delete(kind: str, item_id: str, _: dict = Depends(require_admin)):
+    coll = _coll_for(kind)
+    res = await coll.delete_one({"id": item_id})
+    return {"ok": True, "deleted": res.deleted_count}
+
+
+@api_router.post("/admin/cms/{kind}/reorder")
+async def admin_cms_reorder(kind: str, payload: dict, _: dict = Depends(require_admin)):
+    """payload = { ordered_ids: [id1, id2, ...] }"""
+    coll = _coll_for(kind)
+    ids = payload.get("ordered_ids") or []
+    for i, _id in enumerate(ids):
+        await coll.update_one({"id": _id}, {"$set": {"order": i + 1}})
+    return {"ok": True}
+
+
+# ============================================================
+# ============ OBJECT STORAGE (IMAGE UPLOADS) =================
+# ============================================================
+STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
+APP_NAME = "cla-aesthetics"
+storage_key: Optional[str] = None
+ALLOWED_IMAGE_MIME = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+ALLOWED_VIDEO_MIME = {"video/mp4", "video/webm", "video/quicktime", "video/ogg"}
+ALLOWED_UPLOAD_MIME = ALLOWED_IMAGE_MIME | ALLOWED_VIDEO_MIME
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 8 MB (images)
+MAX_VIDEO_BYTES = 64 * 1024 * 1024  # 64 MB (videos)
+
+
+def init_storage() -> Optional[str]:
+    """Initialize once. Returns reusable storage_key, or None if unavailable."""
+    global storage_key
+    if storage_key:
+        return storage_key
+    key = os.environ.get("EMERGENT_LLM_KEY")
+    if not key:
+        logger.warning("EMERGENT_LLM_KEY not set — image uploads disabled.")
+        return None
+    try:
+        resp = requests.post(f"{STORAGE_URL}/init", json={"emergent_key": key}, timeout=30)
+        resp.raise_for_status()
+        storage_key = resp.json().get("storage_key")
+        logger.info("Object storage initialized.")
+        return storage_key
+    except Exception as e:
+        logger.error(f"Storage init failed: {e}")
+        return None
+
+
+def put_object(path: str, data: bytes, content_type: str) -> dict:
+    key = init_storage()
+    if not key:
+        raise HTTPException(status_code=503, detail="Image storage is not available.")
+    resp = requests.put(
+        f"{STORAGE_URL}/objects/{path}",
+        headers={"X-Storage-Key": key, "Content-Type": content_type},
+        data=data,
+        timeout=120,
+    )
+    if resp.status_code == 403:
+        # Refresh storage_key once and retry
+        global storage_key
+        storage_key = None
+        key = init_storage()
+        resp = requests.put(
+            f"{STORAGE_URL}/objects/{path}",
+            headers={"X-Storage-Key": key, "Content-Type": content_type},
+            data=data,
+            timeout=120,
+        )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def get_object(path: str):
+    key = init_storage()
+    if not key:
+        raise HTTPException(status_code=503, detail="Image storage is not available.")
+    resp = requests.get(
+        f"{STORAGE_URL}/objects/{path}",
+        headers={"X-Storage-Key": key},
+        timeout=60,
+    )
+    if resp.status_code == 403:
+        global storage_key
+        storage_key = None
+        key = init_storage()
+        resp = requests.get(
+            f"{STORAGE_URL}/objects/{path}",
+            headers={"X-Storage-Key": key},
+            timeout=60,
+        )
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail="File not found.")
+    resp.raise_for_status()
+    return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+
+
+@api_router.post("/admin/upload")
+async def admin_upload(file: UploadFile = File(...), admin: dict = Depends(require_admin)):
+    if file.content_type not in ALLOWED_UPLOAD_MIME:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type. Allowed: {sorted(ALLOWED_UPLOAD_MIME)}")
+    is_video = file.content_type in ALLOWED_VIDEO_MIME
+    data = await file.read()
+    limit = MAX_VIDEO_BYTES if is_video else MAX_UPLOAD_BYTES
+    if len(data) > limit:
+        raise HTTPException(status_code=400, detail=f"File too large. Max {limit // (1024*1024)} MB.")
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file.")
+    ext_map = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov", "video/ogg": "ogv"}
+    ext = ext_map.get(file.content_type, "bin")
+    path = f"{APP_NAME}/uploads/{admin['id']}/{uuid.uuid4()}.{ext}"
+    result = put_object(path, data, file.content_type)
+    final_path = result.get("path") or path
+
+    # Persist a reference
+    await db.files.insert_one({
+        "id": str(uuid.uuid4()),
+        "storage_path": final_path,
+        "original_filename": file.filename,
+        "content_type": file.content_type,
+        "size": result.get("size", len(data)),
+        "uploaded_by": admin["id"],
+        "is_deleted": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+    # Public URL the frontend can drop into any image field
+    url = f"/api/uploads/{final_path}"
+    return {"ok": True, "url": url, "path": final_path, "content_type": file.content_type, "size": result.get("size", len(data))}
+
+
+@api_router.get("/uploads/{path:path}")
+async def serve_upload(path: str):
+    record = await db.files.find_one({"storage_path": path, "is_deleted": False}, {"_id": 0})
+    if not record:
+        raise HTTPException(status_code=404, detail="File not found.")
+    data, ct = get_object(path)
+    return Response(
+        content=data,
+        media_type=record.get("content_type") or ct,
+        headers={"Cache-Control": "public, max-age=2592000, immutable"},
+    )
+
+
+@api_router.get("/admin/uploads")
+async def list_uploads(admin: dict = Depends(require_admin)):
+    cur = db.files.find({"is_deleted": False}, {"_id": 0}).sort("created_at", -1).limit(200)
+    items = [f async for f in cur]
+    for it in items:
+        it["url"] = f"/api/uploads/{it['storage_path']}"
+    return {"items": items}
+
+
+# ---------------- Startup ----------------
+@app.on_event("startup")
+async def startup():
+    await db.users.create_index("email", unique=True)
+    await db.bookings.create_index([("date", 1), ("time", 1)])
+    await db.login_attempts.create_index("key")
+    await db.chat_messages.create_index([("session_id", 1), ("created_at", 1)])
+    await db.payment_transactions.create_index("session_id", unique=True)
+    await db.payment_transactions.create_index("user_id")
+    await db.subscriptions.create_index([("user_id", 1), ("plan_id", 1)], unique=True)
+    await db.content.create_index("key", unique=True)
+    await db.intakes.create_index("user_id", unique=True)
+    await db.files.create_index("storage_path", unique=True)
+    # Initialize object storage (non-fatal if it fails — uploads will return 503)
+    try:
+        init_storage()
+    except Exception as e:
+        logger.warning(f"Storage init failed (uploads disabled): {e}")
+
+    # Seed admin idempotently
+    admin_email = os.environ.get("ADMIN_EMAIL", "").lower()
+    admin_password = os.environ.get("ADMIN_PASSWORD", "")
+    if admin_email and admin_password:
+        existing = await db.users.find_one({"email": admin_email})
+        if not existing:
+            await db.users.insert_one({
+                "id": str(uuid.uuid4()),
+                "email": admin_email,
+                "name": "Cinthia Lariviere Alexandre",
+                "phone": "+15166209158",
+                "role": "admin",
+                "password_hash": hash_password(admin_password),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            logger.info(f"Seeded admin: {admin_email}")
+        else:
+            # If env password differs from current hash, update it
+            if not verify_password(admin_password, existing.get("password_hash", "")):
+                await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_password(admin_password), "role": "admin"}})
+                logger.info(f"Updated admin password: {admin_email}")
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    client.close()
+
+
+# ---------------- Mount ----------------
 app.include_router(api_router)
 
+origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+
+# When credentials=True, browsers reject wildcard origins. Use regex to echo any origin back.
+# This allows the app to work on the Emergent preview URL, the deployed *.emergent.host URL,
+# and any custom domain (e.g., cla-bangladesh.com, cla-wellness.com) the admin maps later.
 app.add_middleware(
     CORSMiddleware,
+    allow_origins=origins if origins else [],
+    allow_origin_regex=".*",
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
