@@ -4,7 +4,7 @@ import api from "@/lib/api";
 import { useContent, t } from "@/context/ContentContext";
 import { SectionTitle } from "@/components/sections/About";
 
-export default function Services() {
+export default function Services({ linkTo, compact }) {
     const { content } = useContent();
     const [items, setItems] = useState([]);
 
@@ -22,7 +22,7 @@ export default function Services() {
             <div aria-hidden className="absolute top-0 left-1/2 -translate-x-1/2 w-[60rem] h-[30rem] rounded-full bg-gold/[0.06] blur-[140px] pointer-events-none" />
             <div className="wrap">
                 <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6 mb-12">
-                    <SectionTitle eyebrow={t(content, "treatments.eyebrow", "Treatments")} title={t(content, "treatments.title", "Signature rituals, artfully performed.")} italic={t(content, "treatments.title_italic", "artfully")} />
+                    <SectionTitle eyebrow={t(content, "treatments.eyebrow", "Treatments")} title={t(content, "treatments.title", "Signature rituals, artfully performed.")} italic={t(content, "treatments.title_italic", "artfully")} more={linkTo} moreLabel="Full price list" />
                     <p className="text-bone/60 max-w-md font-light leading-relaxed">{t(content, "treatments.lede", "")}</p>
                 </div>
 
@@ -39,7 +39,7 @@ export default function Services() {
 
                         <div className="mt-12 grid md:grid-cols-2 gap-x-12 lg:gap-x-20 gap-y-10">
                             {cols.map((col) => {
-                                const colItems = items.filter((tr) => (tr.category || "luxury").toLowerCase() === col.cat);
+                                const colItems = items.filter((tr) => (tr.category || "luxury").toLowerCase() === col.cat).slice(0, compact ? 4 : undefined);
                                 if (!colItems.length) return <div key={col.cat} />;
                                 return (
                                     <div key={col.cat}>
@@ -68,7 +68,7 @@ export default function Services() {
                         </div>
 
                         <div className="mt-12 flex flex-col items-center text-center">
-                            <a href="#contact" data-testid="treatments-cta" className="btn-gold rounded-full px-9 py-4 text-xs uppercase tracking-[0.32em]">{t(content, "treatments.cta", "Book your appointment today")}</a>
+                            <a href={t(content, "brand.booking_url", "/contact")} target="_blank" rel="noreferrer" data-testid="treatments-cta" className="btn-gold rounded-full px-9 py-4 text-xs uppercase tracking-[0.32em] text-center">{t(content, "treatments.cta", "Book your appointment today")}</a>
                             <p className="font-serif italic text-2xl text-bone mt-8">{t(content, "treatments.closing", "Enhancing Your Natural Beauty")}</p>
                             <p className="eyebrow mt-2">{t(content, "treatments.tagline", "with precision & care")}</p>
                         </div>

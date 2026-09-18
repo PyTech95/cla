@@ -42,8 +42,9 @@ export default function Footer() {
                 <div className="lg:col-span-2 space-y-3">
                     <p className="eyebrow mb-2">Explore</p>
                     <ul className="space-y-2 text-sm">
-                        {[["#about", "About"], ["#services", "Services"], ["#gallery", "Portfolio"], ["#blog", "Blog"], ["#contact", "Contact"]].map(([h, l]) => (
-                            <li key={h}><a href={h} className="text-bone/65 hover:text-gold transition-colors">{l}</a></li>
+                        <li><a href={t(content, "brand.booking_url", "/contact")} target="_blank" rel="noreferrer" data-testid="footer-book-link" className="text-gold hover:text-gold-light transition-colors">{t(content, "brand.booking_label", "Book Now")}</a></li>
+                        {[["/about", "About"], ["/services", "Services"], ["/portfolio", "Portfolio"], ["/blog", "Blog"], ["/reviews", "Reviews"], ["/contact", "Contact"]].map(([h, l]) => (
+                            <li key={h}><Link to={h} className="text-bone/65 hover:text-gold transition-colors">{l}</Link></li>
                         ))}
                     </ul>
                 </div>

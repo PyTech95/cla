@@ -21,7 +21,7 @@ const MENU = [
     { to: "/admin/treatments", label: "Treatments & Prices", icon: ListOrdered },
     { to: "/admin/team", label: "Team", icon: Users },
     { to: "/admin/testimonials", label: "Testimonials", icon: MessageSquareQuote },
-    { to: "/admin/content", label: "Site Content", icon: FileText },
+    { to: "/admin/content", label: "Pages & Content", icon: FileText },
     { to: "/admin/settings", label: "Settings", icon: Settings },
 ];
 

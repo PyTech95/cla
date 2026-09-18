@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Phone, Mail, MapPin, MessageCircle, Instagram, Clock, Send, CheckCircle2 } from "lucide-react";
+import { Phone, Mail, MapPin, MessageCircle, Instagram, Clock, Send, CheckCircle2, CalendarCheck } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { useContent, t } from "@/context/ContentContext";
@@ -87,6 +87,7 @@ export default function Contact() {
     const instagram = t(content, "brand.instagram", "https://instagram.com/");
     const whatsapp = t(content, "brand.whatsapp", "https://wa.me/15166209158");
     const hoursRaw = t(content, "contact.hours", "");
+    const BOOK = t(content, "brand.booking_url", "");
     const hours = hoursRaw ? hoursRaw.split("\n").map((l) => l.split("|").map((s) => s.trim())).filter((p) => p[0]) : HOURS;
 
     return (
@@ -95,6 +96,9 @@ export default function Contact() {
                 <div className="grid lg:grid-cols-12 gap-10 lg:gap-14 items-start">
                     <div className="lg:col-span-5 space-y-8">
                         <SectionTitle eyebrow={t(content, "booking.eyebrow", "Book your visit")} title={t(content, "booking.title", "We've been waiting for you.")} italic={t(content, "booking.title_italic", "waiting")} lede={t(content, "booking.lede", "")} />
+                        {BOOK && (
+                            <a href={BOOK} target="_blank" rel="noreferrer" data-testid="contact-book-now" className="btn-gold inline-flex items-center gap-3 rounded-full px-8 py-4 text-sm uppercase tracking-[0.24em]"><CalendarCheck className="w-4 h-4" /> {t(content, "brand.booking_label", "Book Now")} online</a>
+                        )}
                         <div className="space-y-4">
                             <a href={`tel:${phoneLink}`} data-testid="contact-phone" className="flex items-center gap-4 group">
                                 <span className="w-11 h-11 rounded-full border border-gold/40 flex items-center justify-center text-gold"><Phone className="w-4 h-4" /></span>

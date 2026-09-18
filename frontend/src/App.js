@@ -12,6 +12,7 @@ import Login from "@/pages/Login";
 import Admin from "@/pages/Admin";
 import LegalPage from "@/pages/LegalPage";
 import BlogPost from "@/pages/BlogPost";
+import { AboutPage, ServicesPage, PortfolioPage, BlogPage, ReviewsPage, ContactPage } from "@/pages/SitePages";
 
 function App() {
     return (
@@ -23,6 +24,12 @@ function App() {
                         <OfferBanner />
                         <Routes>
                             <Route path="/" element={<Home />} />
+                            <Route path="/about" element={<AboutPage />} />
+                            <Route path="/services" element={<ServicesPage />} />
+                            <Route path="/portfolio" element={<PortfolioPage />} />
+                            <Route path="/blog" element={<BlogPage />} />
+                            <Route path="/reviews" element={<ReviewsPage />} />
+                            <Route path="/contact" element={<ContactPage />} />
                             <Route path="/login" element={<Login />} />
                             <Route path="/blog/:slug" element={<BlogPost />} />
                             <Route path="/privacy" element={<LegalPage kind="privacy" />} />
@@ -31,7 +38,6 @@ function App() {
                             <Route path="/cookies" element={<LegalPage kind="cookies" />} />
                             <Route path="/medical-disclaimer" element={<LegalPage kind="medical_disclaimer" />} />
                             <Route path="/accessibility" element={<LegalPage kind="accessibility" />} />
-                            <Route path="/contact" element={<LegalPage kind="contact" />} />
                             <Route
                                 path="/admin/*"
                                 element={

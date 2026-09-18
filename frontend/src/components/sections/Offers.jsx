@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { motion } from "framer-motion";
+import { Link } from "react-router-dom";
 import { ArrowUpRight, Clock } from "lucide-react";
 import api from "@/lib/api";
 import { useContent, t } from "@/context/ContentContext";
@@ -44,9 +45,9 @@ export default function Offers() {
                                     </div>
                                     <h3 className="font-serif text-2xl text-bone leading-snug">{o.title}</h3>
                                     {o.description && <p className="text-bone/60 mt-3 leading-relaxed text-sm flex-1">{o.description}</p>}
-                                    <a href={o.cta_url || "#contact"} target={o.cta_url ? "_blank" : undefined} rel="noreferrer" className="mt-5 self-start btn-gold rounded-full px-5 py-2.5 text-[11px] uppercase tracking-[0.24em] inline-flex items-center gap-2">
-                                        {o.cta_label || "Claim"} <ArrowUpRight className="w-3 h-3" />
-                                    </a>
+                                    {o.cta_url
+                                        ? <a href={o.cta_url} target="_blank" rel="noreferrer" className="mt-5 self-start btn-gold rounded-full px-5 py-2.5 text-[11px] uppercase tracking-[0.24em] inline-flex items-center gap-2">{o.cta_label || "Claim"} <ArrowUpRight className="w-3 h-3" /></a>
+                                        : <Link to="/contact" className="mt-5 self-start btn-gold rounded-full px-5 py-2.5 text-[11px] uppercase tracking-[0.24em] inline-flex items-center gap-2">{o.cta_label || "Claim"} <ArrowUpRight className="w-3 h-3" /></Link>}
                                 </div>
                             </motion.div>
                         );

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Star, ChevronRight, ArrowDown } from "lucide-react";
 import { motion } from "framer-motion";
+import { Link } from "react-router-dom";
 import api from "@/lib/api";
 import { useContent, t } from "@/context/ContentContext";
 import { toAbs } from "@/lib/media";
@@ -59,6 +60,7 @@ export default function Hero() {
 
     const HERO_BG = t(content, "brand.hero_bg_url", "");
     const counterTo = parseInt(t(content, "hero.counter_to", "200"), 10) || 200;
+    const BOOK = t(content, "brand.booking_url", "/contact");
 
     return (
         <section id="home" data-testid="hero" className="relative overflow-hidden min-h-[100svh] flex items-center pt-28 pb-20">
@@ -88,12 +90,12 @@ export default function Hero() {
                         {t(content, "hero.subtitle", "")}
                     </motion.p>
                     <motion.div {...fade(0.4)} className="flex flex-wrap gap-3 sm:gap-4">
-                        <a href="#contact" data-testid="hero-cta-inquire" className="btn-gold rounded-full px-7 py-3.5 inline-flex items-center gap-2 text-sm uppercase tracking-[0.2em]">
+                        <a href={BOOK} target="_blank" rel="noreferrer" data-testid="hero-cta-book" className="btn-gold rounded-full px-7 py-3.5 inline-flex items-center gap-2 text-sm uppercase tracking-[0.2em]">
                             {t(content, "hero.cta_primary", "Book a consultation")} <ChevronRight className="w-4 h-4" />
                         </a>
-                        <a href="#services" data-testid="hero-cta-services" className="btn-ghost rounded-full px-7 py-3.5 inline-flex items-center gap-2 text-sm uppercase tracking-[0.2em]">
+                        <Link to="/services" data-testid="hero-cta-services" className="btn-ghost rounded-full px-7 py-3.5 inline-flex items-center gap-2 text-sm uppercase tracking-[0.2em]">
                             {t(content, "hero.cta_secondary", "View services")}
-                        </a>
+                        </Link>
                     </motion.div>
                     <motion.div {...fade(0.52)} data-testid="hero-reviews" className="inline-flex items-center gap-3 border border-white/10 bg-white/[0.03] rounded-2xl pl-3 pr-5 py-2.5">
                         <GoogleG className="w-8 h-8 shrink-0" />
@@ -132,7 +134,7 @@ export default function Hero() {
                 </motion.div>
             </div>
 
-            <a href="#about" aria-label="Scroll to explore" className="hidden sm:flex absolute bottom-6 left-1/2 -translate-x-1/2 items-center gap-2 text-bone/40 hover:text-gold transition-colors text-[10px] uppercase tracking-[0.3em]">
+            <a href="#marquee" aria-label="Scroll to explore" className="hidden sm:flex absolute bottom-6 left-1/2 -translate-x-1/2 items-center gap-2 text-bone/40 hover:text-gold transition-colors text-[10px] uppercase tracking-[0.3em]">
                 Scroll <ArrowDown className="w-3.5 h-3.5 animate-scroll-cue" />
             </a>
         </section>

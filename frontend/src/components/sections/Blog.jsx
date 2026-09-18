@@ -11,21 +11,22 @@ export function fmtDate(iso) {
     try { return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }); } catch { return ""; }
 }
 
-export default function Blog() {
+export default function Blog({ linkTo, limit, all }) {
     const { content } = useContent();
     const [items, setItems] = useState([]);
     useEffect(() => {
         api.get("/blog").then(({ data }) => setItems(data.items || [])).catch(() => {});
     }, []);
 
-    if (!items.length) return null;
+    if (!items.length && !all) return null;
 
     return (
         <section id="blog" data-testid="blog" className="py-20 sm:py-28 bg-noir-2 border-y border-white/5">
             <div className="wrap">
-                <SectionTitle eyebrow={t(content, "blog.eyebrow", "Journal")} title={t(content, "blog.title", "Notes on skin, science & self-care.")} italic={t(content, "blog.title_italic", "self-care")} />
+                <SectionTitle eyebrow={t(content, "blog.eyebrow", "Journal")} title={t(content, "blog.title", "Notes on skin, science & self-care.")} italic={t(content, "blog.title_italic", "self-care")} more={linkTo} moreLabel="All articles" />
+                {all && !items.length && <p className="text-bone/45 mt-10">No articles published yet — check back soon.</p>}
                 <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 mt-12">
-                    {items.slice(0, 6).map((n, i) => (
+                    {(all ? items : items.slice(0, limit || 6)).map((n, i) => (
                         <motion.article key={n.id} data-testid={`blog-card-${i}`} initial={{ opacity: 0, y: 26 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-40px" }} transition={{ duration: 0.7, delay: i * 0.08 }} className="card-dark overflow-hidden flex flex-col group">
                             <Link to={`/blog/${n.slug}`} className="flex flex-col flex-1">
                                 <div className="h-56 overflow-hidden bg-noir-3">

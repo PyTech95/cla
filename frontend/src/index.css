@@ -67,6 +67,8 @@ h1, h2 { text-wrap: balance; overflow-wrap: break-word; }
 @media (min-width: 640px) { .wrap { padding-inline: 1.5rem; } }
 @media (min-width: 1024px) { .wrap { padding-inline: 2.5rem; } }
 
+.pg :is(h1,h2,h3,h4,h5):not(.no-scale) { zoom: var(--hs, 1); }
+
 .eyebrow { font-size: 11px; letter-spacing: 0.32em; text-transform: uppercase; color: #D4AF37; }
 
 .text-shimmer {

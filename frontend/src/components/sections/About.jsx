@@ -1,10 +1,11 @@
 import React from "react";
-import { Award, HeartHandshake, Sparkles } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Award, HeartHandshake, Sparkles, ArrowUpRight } from "lucide-react";
 import { motion } from "framer-motion";
 import { useContent, t } from "@/context/ContentContext";
 import { toAbs } from "@/lib/media";
 
-export function SectionTitle({ eyebrow, title, italic, lede, align = "left", testId }) {
+export function SectionTitle({ eyebrow, title, italic, lede, align = "left", testId, more, moreLabel = "Explore" }) {
     const nodes = (() => {
         if (!italic || !title.includes(italic)) return title;
         const [pre, post] = title.split(italic);
@@ -15,11 +16,12 @@ export function SectionTitle({ eyebrow, title, italic, lede, align = "left", tes
             {eyebrow && <div className="eyebrow mb-3">{eyebrow}</div>}
             <h2 className="font-serif text-4xl sm:text-5xl lg:text-6xl tracking-tight leading-[1.05] text-bone">{nodes}</h2>
             {lede && <p className="text-bone/65 mt-5 font-light leading-relaxed text-base md:text-lg">{lede}</p>}
+            {more && <Link to={more} data-testid={`more-${more.replace("/", "")}`} className="mt-5 inline-flex items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gold hover:text-gold-light link-sweep">{moreLabel} <ArrowUpRight className="w-3.5 h-3.5" /></Link>}
         </div>
     );
 }
 
-export default function About() {
+export default function About({ linkTo }) {
     const { content } = useContent();
     const aboutImg = toAbs(t(content, "brand.about_image_url", ""));
     const highlights = [
@@ -44,7 +46,7 @@ export default function About() {
                 </motion.div>
 
                 <motion.div initial={{ opacity: 0, x: 30 }} whileInView={{ opacity: 1, x: 0 }} viewport={{ once: true, margin: "-80px" }} transition={{ duration: 0.9, delay: 0.1 }} className="lg:col-span-7 space-y-7 lg:pl-6">
-                    <SectionTitle eyebrow={t(content, "about.eyebrow", "Our story")} title={t(content, "about.title", "Quiet luxury, remarkable results.")} italic={t(content, "about.title_italic", "remarkable")} />
+                    <SectionTitle eyebrow={t(content, "about.eyebrow", "Our story")} title={t(content, "about.title", "Quiet luxury, remarkable results.")} italic={t(content, "about.title_italic", "remarkable")} more={linkTo} moreLabel="Meet the team" />
                     <p className="text-bone/75 text-lg leading-relaxed font-light max-w-2xl">{t(content, "about.body", "")}</p>
                     <p className="text-bone/60 leading-relaxed max-w-2xl font-light">{t(content, "about.body2", "")}</p>
                     <div className="grid sm:grid-cols-3 gap-6 pt-4 border-t border-white/10">

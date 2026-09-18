@@ -639,7 +639,8 @@ DEFAULT_CONTENT = {
     "brand.facebook": "https://facebook.com/",
     "brand.whatsapp": "https://wa.me/15166209158",
     "brand.maps_query": "1078 Grand Avenue, South Hempstead, NY 11550",
-    "brand.booking_url": "",
+    "brand.booking_url": "https://mdwareonline.com/claaestheticsandwellness",
+    "brand.booking_label": "Book Now",
 
     # Hero
     "hero.eyebrow": "South Hempstead, NY",
@@ -705,6 +706,20 @@ DEFAULT_CONTENT = {
 
     # Testimonials header
     "testimonials.eyebrow": "Voices",
+
+    # Per-page settings (banner + typography). Scales are percentages.
+    "page.home.heading_scale": "100", "page.home.text_scale": "100",
+    "page.about.eyebrow": "Our story", "page.about.title": "About CLA", "page.about.subtitle": "A boutique medical-aesthetics studio built on listening first.", "page.about.banner_url": "", "page.about.heading_scale": "100", "page.about.text_scale": "100",
+    "page.services.eyebrow": "Treatments", "page.services.title": "Services & Pricing", "page.services.subtitle": "Precision injectables, restorative skin rituals and medical wellness — every treatment calibrated to you.", "page.services.banner_url": "", "page.services.heading_scale": "100", "page.services.text_scale": "100",
+    "page.portfolio.eyebrow": "Portfolio", "page.portfolio.title": "Gallery", "page.portfolio.subtitle": "Moments of light, texture and transformation inside the CLA studio.", "page.portfolio.banner_url": "", "page.portfolio.heading_scale": "100", "page.portfolio.text_scale": "100",
+    "page.blog.eyebrow": "Journal", "page.blog.title": "Blog", "page.blog.subtitle": "Notes on skin, science and self-care from Cinthia and the CLA team.", "page.blog.banner_url": "", "page.blog.heading_scale": "100", "page.blog.text_scale": "100",
+    "page.reviews.eyebrow": "Voices", "page.reviews.title": "Client Reviews", "page.reviews.subtitle": "Real words from the people who trust us with their glow.", "page.reviews.banner_url": "", "page.reviews.heading_scale": "100", "page.reviews.text_scale": "100",
+    "page.contact.eyebrow": "Book your visit", "page.contact.title": "Contact", "page.contact.subtitle": "Send an inquiry, call, or drop by the studio in South Hempstead.", "page.contact.banner_url": "", "page.contact.heading_scale": "100", "page.contact.text_scale": "100",
+
+    # CTA band
+    "cta.eyebrow": "Ready when you are",
+    "cta.title": "Your consultation begins with a conversation.",
+    "cta.body": "Tell us your goals — we'll design a treatment plan that feels unmistakably you.",
 
     # Blog / journal
     "blog.eyebrow": "Journal",

@@ -72,7 +72,7 @@ function Strip({ items, onOpen }) {
     );
 }
 
-export default function Gallery() {
+export default function Gallery({ linkTo, full }) {
     const { content } = useContent();
     const [items, setItems] = useState([]);
     const [activeIdx, setActiveIdx] = useState(null);
@@ -105,16 +105,31 @@ export default function Gallery() {
     return (
         <section id="gallery" data-testid="gallery" className="py-20 sm:py-28 bg-noir overflow-hidden">
             <div className="wrap mb-10 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-6">
-                <SectionTitle eyebrow={t(content, "gallery.eyebrow", "Portfolio")} title={t(content, "gallery.title", "Moments of light & texture.")} italic={t(content, "gallery.title_italic", "light")} />
-                {items.length > 0 && (
+                <SectionTitle eyebrow={t(content, "gallery.eyebrow", "Portfolio")} title={t(content, "gallery.title", "Moments of light & texture.")} italic={t(content, "gallery.title_italic", "light")} more={linkTo} moreLabel="Open portfolio" />
+                {items.length > 0 && !full && (
                     <button onClick={() => setGridOpen(true)} data-testid="gallery-view-all" className="btn-ghost self-start sm:self-auto rounded-full px-7 py-3.5 inline-flex items-center gap-2 text-sm uppercase tracking-[0.2em] shrink-0">
                         View gallery <ArrowUpRight className="w-4 h-4" />
                     </button>
                 )}
             </div>
-            <div className="pl-4 sm:pl-6 lg:pl-10">
-                <Strip items={items} onOpen={openLightbox} />
-            </div>
+            {full ? (
+                <div className="wrap" data-testid="gallery-full-grid">
+                    {items.length === 0 && <p className="text-bone/45">Gallery coming soon.</p>}
+                    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
+                        {items.map((g, i) => (
+                            <button key={g.id || i} data-testid={`gallery-item-${i}`} onClick={() => openLightbox(i)} className="relative h-[180px] sm:h-[240px] lg:h-[280px] overflow-hidden rounded-[16px] border border-white/10 group bg-noir-3">
+                                <MediaThumb item={g} className="absolute inset-0 w-full h-full object-cover image-kenburns" />
+                                {mediaKind(g) !== "image" && <span className="absolute top-3 left-3 w-8 h-8 rounded-full bg-noir/70 text-gold border border-gold/40 flex items-center justify-center"><Play className="w-3.5 h-3.5" /></span>}
+                                {g.alt && <span className="absolute bottom-0 inset-x-0 p-3 text-left text-sm font-serif text-bone bg-gradient-to-t from-noir/85 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">{g.alt}</span>}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            ) : (
+                <div className="pl-4 sm:pl-6 lg:pl-10">
+                    <Strip items={items} onOpen={openLightbox} />
+                </div>
+            )}
 
             <Dialog open={gridOpen} onOpenChange={setGridOpen}>
                 <DialogContent className="max-w-6xl bg-noir-2 border-white/10 text-bone p-0 overflow-hidden">

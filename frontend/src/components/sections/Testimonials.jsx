@@ -2,8 +2,10 @@ import React, { useEffect, useState } from "react";
 import { Star, ChevronLeft, ChevronRight } from "lucide-react";
 import api from "@/lib/api";
 import { useContent, t } from "@/context/ContentContext";
+import { Link } from "react-router-dom";
+import { ArrowUpRight } from "lucide-react";
 
-export default function Testimonials() {
+export default function Testimonials({ linkTo, all }) {
     const { content } = useContent();
     const [items, setItems] = useState([]);
     const [i, setI] = useState(0);
@@ -42,7 +44,19 @@ export default function Testimonials() {
                     </div>
                     <button data-testid="testimonial-next" onClick={() => go(i + 1)} aria-label="Next testimonial" className="p-3 rounded-full border border-white/15 text-bone hover:border-gold hover:text-gold transition"><ChevronRight className="w-4 h-4" /></button>
                 </div>
+                {linkTo && <Link to={linkTo} data-testid="more-reviews" className="mt-8 inline-flex items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-gold hover:text-gold-light">All reviews <ArrowUpRight className="w-3.5 h-3.5" /></Link>}
             </div>
+            {all && (
+                <div className="wrap mt-16 grid sm:grid-cols-2 lg:grid-cols-3 gap-4" data-testid="reviews-grid">
+                    {items.map((it, idx) => (
+                        <div key={it.id || idx} className="card-dark p-6">
+                            <div className="flex gap-0.5 mb-3">{Array.from({ length: it.rating || 5 }).map((_, s) => <Star key={s} className="w-3.5 h-3.5 fill-gold text-gold" />)}</div>
+                            <p className="font-serif italic text-lg text-bone/90 leading-relaxed">&ldquo;{it.text}&rdquo;</p>
+                            <p className="font-script text-3xl text-gold-light mt-4">{it.name}</p>
+                        </div>
+                    ))}
+                </div>
+            )}
         </section>
     );
 }
