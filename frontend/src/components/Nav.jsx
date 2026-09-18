@@ -41,7 +41,7 @@ export default function Nav() {
         >
             <div className="wrap flex items-center justify-between py-3">
                 <Link to="/" data-testid="nav-logo" className="flex items-center gap-3 shrink-0">
-                    {LOGO && <img src={LOGO} alt="CLA Aesthetics & Wellness" className="w-14 h-14 sm:w-16 sm:h-16 lg:w-[72px] lg:h-[72px] object-contain" />}
+                    {LOGO && <img src={LOGO} alt="CLA Aesthetics & Wellness" className="w-[68px] h-[68px] sm:w-[78px] sm:h-[78px] lg:w-[88px] lg:h-[88px] object-contain" />}
                 </Link>
 
                 <nav className="hidden lg:flex items-center gap-8">

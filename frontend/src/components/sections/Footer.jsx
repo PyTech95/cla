@@ -20,7 +20,7 @@ export default function Footer() {
             <div className="wrap grid md:grid-cols-2 lg:grid-cols-12 gap-10">
                 <div className="lg:col-span-5 space-y-5">
                     <div className="flex items-center gap-4">
-                        {LOGO && <img src={LOGO} alt="CLA" className="w-16 h-16 object-contain" />}
+                        {LOGO && <img src={LOGO} alt="CLA" className="w-20 h-20 object-contain" />}
                         <div>
                             <p className="font-serif text-2xl text-bone">{name}</p>
                             <p className="text-bone/50 text-xs uppercase tracking-[0.3em] mt-1">{t(content, "footer.tagline", "Enhancing your natural beauty")}</p>

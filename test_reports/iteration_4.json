@@ -1,0 +1,32 @@
+{
+  "summary": "Iteration 4 regression + new multi-page routing + external booking link + admin per-page typography. Backend: 28/28 pytest pass (added assertions for page.about.title='About CLA', page.services.heading_scale='100', cta.title, brand.booking_url=mdwareonline link, brand.booking_label='Book Now'). Frontend desktop: all nav-link-* route correctly with gold active state, nav-book-btn/hero-cta-book/cta-book/footer-book-link/treatments-cta/contact-book-now/mnav-book-btn/mobile-book-btn all point to https://mdwareonline.com/claaestheticsandwellness with target=_blank. Each page shows page-banner-{slug} with correct titles (About CLA, Services & Pricing, Gallery, Blog, Client Reviews, Contact). Hero more-* links + cta-inquire route to internal pages. /portfolio gallery-full-grid renders 6 items, lightbox open/next/close works. /reviews shows reviews-grid. /contact inquiry form submits -> inquiry-success shown. Admin: login OK, Pages & Content -> content-group-about + typography-about works: setting heading-scale-about=120 and text-scale-about=110 -> /about documentElement.style.fontSize=='110%' and h1 computed zoom=1.2 (matches spec). content-input-page.about.title save updates /about banner. Values restored to defaults (100 / 'About CLA'). Brand group: content-input-brand.booking_url is a text INPUT with value=https://mdwareonline.com/claaestheticsandwellness. Mobile 390x844: /about /services /portfolio /contact /reviews /blog have NO horizontal overflow. Home has small horizontal overflow (scrollWidth=404 vs 390) caused by gallery shimmer marquee spans (font-serif italic text-shimmer) that overflow their parent — parent lacks overflow-x:hidden. nav-mobile-toggle opens sheet with all mnav-link-* + mnav-book-btn (booking link _blank). mobile-book-bar shows mobile-call-btn (tel:), mobile-whatsapp-btn (_blank wa.me), mobile-book-btn (booking link _blank). Admin mobile: admin-mobile-menu present + opens drawer with nav items. Unknown route redirects to /. /blog/web-app-locked-down returns 'Post not found' (that slug does not exist in DB — the review request literal 'web-app-locked-down' appears to be a placeholder artifact from the preview host name).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Home (mobile 390)", "issues": ["Gallery/marquee row causes 14px horizontal overflow (scrollWidth=404 vs viewport 390). Add overflow-x:hidden on the marquee wrapper (parent of the shimmer spans with class 'flex items-center gap-6 sm:gap-8 pr-8 sm:pr-10 font-serif italic text-shimmer') or set overflow-x:clip on <main>/<body> to prevent horizontal scroll on small screens."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Add overflow-x:hidden (or overflow-x:clip) to the home gallery/marquee wrapper (or body) to eliminate ~14px horizontal overflow on 390px viewport.",
+    "OPTIONAL: The review request references /blog/web-app-locked-down as an 'existing post'; that slug does not exist in DB. If a real seeded post was intended, verify the correct slug."
+  ],
+  "critical_code_review_comments": [
+    "PageShell font-size hack sets html style.fontSize globally on mount; when switching pages quickly this may leak scale between routes if unmount ordering is off — consider scoping via a CSS variable on the .pg root instead of document.documentElement.",
+    "Admin ContentAdmin re-renders after each save which detaches DOM handles; harmless for users but a testability annoyance (playwright must re-query controls after each save).",
+    "Marquee container missing overflow-x:hidden — causes root-level horizontal scroll on mobile."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": { "backend": "100%", "frontend": "98%" },
+  "test_credentials": "admin@cla-wellness.com / ClaAdmin2026!",
+  "seed_data_creation": "Created 1 inquiry lead (TEST_UI Router) via /contact form; created + restored admin content changes (page.about.title, page.about.heading_scale, page.about.text_scale). Old harmless test.key still present in content from prior iterations.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend regression suite at /app/backend/tests/backend_test.py has been extended with new content-key assertions (booking_url/label, page.about.title, page.services.heading_scale, cta.title). Actual banner testids are page-banner-{slug} (about/services/portfolio/blog/reviews/contact); the literal 'page-banner-web-app-locked-down' in the review request is a placeholder artifact from the preview host name and should be ignored. After each admin content save the DOM re-renders — re-query controls before every action. Only known remaining defect: ~14px horizontal overflow on home at 390px caused by marquee spans.",
+  "rca of the issue": "Home mobile horizontal overflow: the gallery shimmer marquee row (span.flex.items-center.gap-6.sm:gap-8.pr-8.sm:pr-10.font-serif.italic.text-shimmer) extends beyond the viewport width because its ancestor lacks overflow-x:hidden. Adding overflow-x:hidden on the marquee wrapper (or body) will fix scrollWidth so it equals clientWidth on 390px."
+}

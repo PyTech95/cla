@@ -258,6 +258,12 @@ class TestContent:
         d = r.json()
         assert "blog.eyebrow" in d
         assert "blog.title" in d
+        # New multi-page & booking content keys
+        assert d.get("page.about.title") == "About CLA"
+        assert d.get("page.services.heading_scale") == "100"
+        assert "cta.title" in d
+        assert d.get("brand.booking_url") == "https://mdwareonline.com/claaestheticsandwellness"
+        assert d.get("brand.booking_label") == "Book Now"
 
         # upsert
         r = s.put(f"{API}/admin/content", headers=admin_headers, json={"key": "test.key", "value": "TEST_VALUE"})
