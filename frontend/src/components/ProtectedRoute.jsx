@@ -8,16 +8,13 @@ export default function ProtectedRoute({ children, requireRole }) {
 
     if (loading || user === null) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-ivory">
-                <div className="text-charcoal/60 font-serif text-2xl">Loading…</div>
+            <div className="min-h-screen flex items-center justify-center bg-noir">
+                <div className="text-bone/60 font-serif text-2xl">Loading…</div>
             </div>
         );
     }
-    if (!user) {
+    if (!user || (requireRole && user.role !== requireRole)) {
         return <Navigate to="/login" state={{ from: location.pathname }} replace />;
-    }
-    if (requireRole && user.role !== requireRole) {
-        return <Navigate to="/portal" replace />;
     }
     return children;
 }

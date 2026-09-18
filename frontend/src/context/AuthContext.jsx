@@ -29,13 +29,6 @@ export function AuthProvider({ children }) {
         return data;
     }, []);
 
-    const register = useCallback(async (payload) => {
-        const { data } = await api.post("/auth/register", payload);
-        if (data?.access_token) setAuthTokens(data.access_token, data.refresh_token);
-        setUser(data);
-        return data;
-    }, []);
-
     const logout = useCallback(async () => {
         try {
             await api.post("/auth/logout");
@@ -47,8 +40,8 @@ export function AuthProvider({ children }) {
     }, []);
 
     const value = useMemo(
-        () => ({ user, loading, login, register, logout, refresh: fetchMe }),
-        [user, loading, login, register, logout, fetchMe]
+        () => ({ user, loading, login, logout, refresh: fetchMe }),
+        [user, loading, login, logout, fetchMe]
     );
 
     return (

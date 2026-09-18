@@ -6,14 +6,13 @@ import Marquee from "@/components/sections/Marquee";
 import About from "@/components/sections/About";
 import Team from "@/components/sections/Team";
 import Services from "@/components/sections/Services";
-import Gallery from "@/components/sections/Gallery";
 import Offers from "@/components/sections/Offers";
-import News from "@/components/sections/News";
+import Gallery from "@/components/sections/Gallery";
+import Blog from "@/components/sections/Blog";
 import Testimonials from "@/components/sections/Testimonials";
 import Contact from "@/components/sections/Contact";
 import Footer from "@/components/sections/Footer";
 import MobileBookBar from "@/components/MobileBookBar";
-import PWAInstallPrompt from "@/components/PWAInstallPrompt";
 
 export default function Home() {
     const mainRef = useRef(null);
@@ -32,14 +31,14 @@ export default function Home() {
                     }
                 });
             },
-            { threshold: 0.12, rootMargin: "0px 0px -8% 0px" }
+            { threshold: 0.08, rootMargin: "0px 0px -6% 0px" }
         );
         els.forEach((el) => io.observe(el));
         return () => io.disconnect();
     }, []);
 
     return (
-        <main ref={mainRef} className="bg-ivory text-charcoal">
+        <main ref={mainRef} className="bg-noir text-bone" data-testid="home-page">
             <ScrollProgress />
             <Nav />
             <Hero />
@@ -49,13 +48,12 @@ export default function Home() {
             <Services />
             <Offers />
             <Gallery />
-            <News />
+            <Blog />
             <Testimonials />
             <Contact />
             <Footer />
-            <div className="h-24 lg:hidden" aria-hidden />
+            <div className="h-20 lg:hidden" aria-hidden />
             <MobileBookBar />
-            <PWAInstallPrompt />
         </main>
     );
 }

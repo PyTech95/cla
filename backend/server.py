@@ -5,6 +5,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 import os
+import re
 import uuid
 import logging
 import smtplib
@@ -16,7 +17,7 @@ from typing import List, Optional
 
 import bcrypt
 import jwt
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, Query, UploadFile, File
+from fastapi import BackgroundTasks, FastAPI, APIRouter, HTTPException, Request, Response, Depends, Query, UploadFile, File
 from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -84,13 +85,6 @@ def clear_auth_cookies(response: Response):
 
 
 # ---------------- Models ----------------
-class RegisterIn(BaseModel):
-    name: str = Field(min_length=1, max_length=120)
-    email: EmailStr
-    password: str = Field(min_length=6, max_length=200)
-    phone: Optional[str] = None
-
-
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
@@ -110,16 +104,13 @@ class UserOut(BaseModel):
 
 
 class LeadIn(BaseModel):
-    name: str
-    phone: str
-    interest: Optional[str] = None
-    contact_via: Optional[str] = "call"  # call | whatsapp
-    message: Optional[str] = None
-
-
-class ChatIn(BaseModel):
-    session_id: str
-    message: str
+    name: str = Field(min_length=1, max_length=120)
+    phone: str = Field(min_length=3, max_length=40)
+    email: Optional[str] = ""
+    interest: Optional[str] = ""
+    contact_via: Optional[str] = "call"
+    message: Optional[str] = ""
+    source: Optional[str] = "website"
 
 
 class SmtpSettings(BaseModel):
@@ -249,20 +240,46 @@ async def list_services():
 
 
 @api_router.post("/leads")
-async def create_lead(payload: LeadIn):
+async def create_lead(payload: LeadIn, background: BackgroundTasks):
     lead = {
         "id": str(uuid.uuid4()),
-        "name": payload.name,
-        "phone": payload.phone,
+        "name": payload.name.strip(),
+        "phone": payload.phone.strip(),
+        "email": (payload.email or "").strip(),
         "interest": payload.interest or "",
         "contact_via": payload.contact_via or "call",
         "message": payload.message or "",
+        "source": payload.source or "website",
         "status": "new",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.leads.insert_one(lead.copy())
     lead.pop("_id", None)
+    background.add_task(notify_new_lead, lead)
     return {"ok": True, "lead": lead}
+
+
+async def notify_new_lead(lead: dict):
+    smtp = await load_smtp_config()
+    if not smtp or not smtp.get("enabled"):
+        return
+    to = smtp.get("recipients") or [smtp.get("from_email") or smtp.get("username")]
+    html = (
+        f"<h2>New inquiry from {lead['name']}</h2>"
+        f"<p><b>Phone:</b> {lead['phone']}<br><b>Email:</b> {lead.get('email') or '-'}<br>"
+        f"<b>Service:</b> {lead.get('interest') or '-'}<br><b>Prefers:</b> {lead.get('contact_via')}</p>"
+        f"<p>{lead.get('message') or ''}</p>"
+    )
+    try:
+        send_email_sync(smtp, to=[x for x in to if x], subject=f"New inquiry — {lead['name']}", html_body=html)
+    except Exception as e:
+        logger.error(f"Lead email failed: {e}")
+
+
+@api_router.delete("/leads/{lead_id}")
+async def delete_lead(lead_id: str, _: dict = Depends(require_admin)):
+    await db.leads.delete_one({"id": lead_id})
+    return {"ok": True}
 
 
 @api_router.get("/leads")
@@ -280,28 +297,6 @@ async def update_lead(lead_id: str, status: str = Query(...), _: dict = Depends(
 
 
 # ---------------- Auth Endpoints ----------------
-@api_router.post("/auth/register")
-async def register(payload: RegisterIn, response: Response):
-    email = payload.email.lower()
-    existing = await db.users.find_one({"email": email})
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
-    user = {
-        "id": str(uuid.uuid4()),
-        "email": email,
-        "name": payload.name,
-        "phone": payload.phone or "",
-        "role": "client",
-        "password_hash": hash_password(payload.password),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    await db.users.insert_one(user)
-    access = create_access_token(user["id"], user["email"], user["role"])
-    refresh = create_refresh_token(user["id"])
-    set_auth_cookies(response, access, refresh)
-    return {"id": user["id"], "name": user["name"], "email": user["email"], "role": user["role"], "phone": user["phone"], "access_token": access, "refresh_token": refresh}
-
-
 @api_router.post("/auth/login")
 async def login(payload: LoginIn, request: Request, response: Response):
     email = payload.email.lower()
@@ -384,77 +379,6 @@ async def refresh_token(request: Request, response: Response):
         raise HTTPException(status_code=401, detail="Invalid refresh")
 
 
-# ---------------- Chat (Camille) ----------------
-SYSTEM_PROMPT = (
-    "You are Camille, the warm, attentive AI concierge for CLA Aesthetics & Wellness — a luxury "
-    "medical-aesthetics studio in South Hempstead, NY founded by Cinthia Lariviere Alexandre. "
-    "Speak with poise and warmth; keep replies concise (2–4 sentences). Use British/American spelling consistently. "
-    "Help guests with services, pricing, hours and booking. Available services: "
-    "Botox (from $12/unit, 30 min), Dermal Fillers (from $650/syringe, 45 min), "
-    "PDO Thread Lift (from $800, 60 min), PRP Facial (from $450, 60 min), "
-    "PRF Treatment (from $500, 60 min), Hydrofacial (from $250, 60 min), "
-    "Laser Therapy (from $295, 45 min), Microneedling + PRP (from $400, 75 min), "
-    "Skin Rejuvenation (from $350, 90 min), Hair Restoration (from $500, 60 min), "
-    "IV Nutrition Therapy (from $185, 45 min), Weight Loss Program (from $299). "
-    "Body Spa is launching soon. Hours: Mon–Fri 10am–8pm · Sat 9am–6pm · Sun by appointment. "
-    "Address: 1078 Grand Avenue, South Hempstead, NY 11550. Phone: 516-620-9158. "
-    "Encourage booking via the calendar on this page. If asked anything medical, recommend a "
-    "personal consultation with Cinthia. Never invent prices not listed above."
-)
-
-
-@api_router.post("/chat")
-async def chat(payload: ChatIn):
-    openai_key = os.environ.get("OPENAI_API_KEY")
-    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
-    emergent_key = os.environ.get("EMERGENT_LLM_KEY")
-    if not (openai_key or anthropic_key or emergent_key):
-        raise HTTPException(status_code=503, detail="AI concierge is not configured.")
-
-    try:
-        if emergent_key:
-            from emergentintegrations.llm.chat import LlmChat, UserMessage
-            chat_inst = LlmChat(
-                api_key=emergent_key,
-                session_id=payload.session_id,
-                system_message=SYSTEM_PROMPT,
-            ).with_model("anthropic", "claude-sonnet-4-5-20250929")
-            reply = str(await chat_inst.send_message(UserMessage(text=payload.message)))
-        elif openai_key:
-            from openai import AsyncOpenAI
-            client = AsyncOpenAI(api_key=openai_key)
-            completion = await client.chat.completions.create(
-                model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-                max_tokens=500,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": payload.message},
-                ],
-            )
-            reply = completion.choices[0].message.content
-        else:
-            from anthropic import AsyncAnthropic
-            client = AsyncAnthropic(api_key=anthropic_key)
-            msg = await client.messages.create(
-                model=os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest"),
-                max_tokens=500,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": payload.message}],
-            )
-            reply = msg.content[0].text
-        now = datetime.now(timezone.utc).isoformat()
-        await db.chat_messages.insert_many([
-            {"id": str(uuid.uuid4()), "session_id": payload.session_id, "role": "user", "text": payload.message, "created_at": now},
-            {"id": str(uuid.uuid4()), "session_id": payload.session_id, "role": "assistant", "text": str(reply), "created_at": now},
-        ])
-        return {"response": str(reply)}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Chat error: {e}")
-        raise HTTPException(status_code=503, detail="Camille is resting for a moment. Please try again shortly.")
-
-
 # ---------------- Admin Settings (SMTP) ----------------
 @api_router.get("/admin/settings/smtp")
 async def get_smtp(_: dict = Depends(require_admin)):
@@ -526,436 +450,27 @@ def send_email_sync(smtp: dict, to: List[str], subject: str, html_body: str):
 
 
 
-# ============================================================
-# ============ ADVANCED CRM EXTENSIONS ========================
-# ============================================================
-
-MEMBERSHIP_PLANS = {
-    "first-visit": {"name": "First Visit Ritual", "amount": 120.00, "kind": "package", "recurring": False},
-    "glow": {"name": "Glow Membership", "amount": 129.00, "kind": "subscription", "recurring": True, "interval": "month"},
-    "couples": {"name": "Couple's Retreat", "amount": 320.00, "kind": "package", "recurring": False},
-}
-
-
-# ---------------- Models ----------------
-class MembershipCheckoutIn(BaseModel):
-    plan_id: str  # first-visit | glow | couples
-    origin_url: str
-
-
-class IntakeIn(BaseModel):
-    dob: Optional[str] = None
-    pregnancy: Optional[bool] = False
-    allergies: Optional[str] = ""
-    medications: Optional[str] = ""
-    skin_concerns: Optional[str] = ""
-    goals: Optional[str] = ""
-    medical_history: Optional[str] = ""
-    consent: bool = False
-
-
 class ContentBlockIn(BaseModel):
     key: str
     value: str
 
 
-# ---------------- Stripe Helpers ----------------
-def get_stripe_key():
-    api_key = os.environ.get("STRIPE_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=503, detail="Payments are not configured.")
-    return api_key
-
-
-def _emergent_stripe():
-    """Return (StripeCheckout, CheckoutSessionRequest) if the Emergent library is
-    available (Emergent-hosted preview), otherwise (None, None) so callers fall
-    back to the official `stripe` SDK (self-hosted / VPS)."""
-    try:
-        from emergentintegrations.payments.stripe.checkout import (
-            StripeCheckout,
-            CheckoutSessionRequest,
-        )
-        return StripeCheckout, CheckoutSessionRequest
-    except Exception:
-        return None, None
-
-
-async def _create_session(name, amount, currency, success_url, cancel_url, metadata, webhook_url):
-    key = get_stripe_key()
-    SC, CSR = _emergent_stripe()
-    if SC:
-        stripe = SC(api_key=key, webhook_url=webhook_url)
-        session = await stripe.create_checkout_session(CSR(
-            amount=float(amount), currency=currency,
-            success_url=success_url, cancel_url=cancel_url, metadata=metadata,
-        ))
-        return session.session_id, session.url
-    import stripe as stripe_sdk
-    stripe_sdk.api_key = key
-    s = stripe_sdk.checkout.Session.create(
-        mode="payment",
-        line_items=[{
-            "price_data": {
-                "currency": currency,
-                "product_data": {"name": name},
-                "unit_amount": int(round(float(amount) * 100)),
-            },
-            "quantity": 1,
-        }],
-        success_url=success_url,
-        cancel_url=cancel_url,
-        metadata=metadata,
-    )
-    return s.id, s.url
-
-
-# ---------------- Membership Checkout ----------------
-@api_router.post("/checkout/membership")
-async def create_membership_checkout(payload: MembershipCheckoutIn, request: Request, user: dict = Depends(get_current_user)):
-    plan = MEMBERSHIP_PLANS.get(payload.plan_id)
-    if not plan:
-        raise HTTPException(status_code=400, detail="Unknown plan.")
-    origin = payload.origin_url.rstrip("/")
-    success_url = f"{origin}/membership/success?session_id={{CHECKOUT_SESSION_ID}}"
-    cancel_url = f"{origin}/membership/cancel?session_id={{CHECKOUT_SESSION_ID}}"
-
-    kind = "membership" if plan["recurring"] else "package"
-    metadata = {"kind": kind, "plan_id": payload.plan_id, "user_id": user["id"]}
-    session_id, session_url = await _create_session(
-        plan.get("name", "CLA Membership"),
-        float(plan["amount"]), "usd", success_url, cancel_url, metadata,
-        f"{origin}/api/webhook/stripe",
-    )
-
-    await db.payment_transactions.insert_one({
-        "id": str(uuid.uuid4()),
-        "session_id": session_id,
-        "user_id": user["id"],
-        "email": user["email"],
-        "kind": kind,
-        "plan_id": payload.plan_id,
-        "amount": float(plan["amount"]),
-        "currency": "usd",
-        "status": "open",
-        "payment_status": "pending",
-        "metadata": metadata,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
-    return {"session_id": session_id, "url": session_url}
-
-
-@api_router.get("/checkout/status/{session_id}")
-async def checkout_status(session_id: str, request: Request, user: dict = Depends(get_current_user)):
-    tx = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
-    if not tx:
-        raise HTTPException(status_code=404, detail="Transaction not found.")
-    if tx.get("user_id") != user["id"] and user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Not allowed.")
-
-    # If already finalised, return cached
-    if tx.get("payment_status") in {"paid", "expired", "failed"} and tx.get("processed"):
-        return {"status": tx.get("status"), "payment_status": tx.get("payment_status"), "amount_total": int(tx.get("amount", 0) * 100), "currency": tx.get("currency", "usd")}
-
-    origin = str(request.base_url).rstrip("/")
-    key = get_stripe_key()
-    SC, _ = _emergent_stripe()
-
-    try:
-        if SC:
-            stripe = SC(api_key=key, webhook_url=f"{origin}/api/webhook/stripe")
-            status_resp = await stripe.get_checkout_status(session_id)
-            resp_status = status_resp.status
-            resp_payment_status = status_resp.payment_status
-            resp_amount = status_resp.amount_total
-            resp_currency = status_resp.currency
-            resp_metadata = status_resp.metadata if isinstance(status_resp.metadata, dict) else dict(status_resp.metadata or {})
-        else:
-            import stripe as stripe_sdk
-            stripe_sdk.api_key = key
-            s = stripe_sdk.checkout.Session.retrieve(session_id)
-            resp_status = s.status
-            resp_payment_status = s.payment_status
-            resp_amount = s.amount_total
-            resp_currency = s.currency
-            resp_metadata = dict(s.metadata or {})
-    except Exception as e:
-        logger.warning(f"Stripe status lookup fell back to cache for {session_id}: {e}")
-        resp_status = tx.get("status") or "open"
-        resp_payment_status = tx.get("payment_status") or "pending"
-        resp_amount = int(float(tx.get("amount", 0)) * 100)
-        resp_currency = tx.get("currency", "usd")
-        resp_metadata = tx.get("metadata", {})
-
-    update = {
-        "status": resp_status,
-        "payment_status": resp_payment_status,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }
-
-    # If paid and not yet processed, finalise side effects exactly once
-    if resp_payment_status == "paid" and not tx.get("processed"):
-        update["processed"] = True
-        kind = tx.get("kind")
-        if kind == "booking_deposit" and tx.get("booking_id"):
-            await db.bookings.update_one({"id": tx["booking_id"]}, {"$set": {"status": "confirmed", "deposit_paid": True}})
-        elif kind == "membership":
-            now = datetime.now(timezone.utc)
-            await db.subscriptions.update_one(
-                {"user_id": tx["user_id"], "plan_id": tx.get("plan_id")},
-                {"$set": {
-                    "user_id": tx["user_id"],
-                    "email": tx.get("email", ""),
-                    "plan_id": tx.get("plan_id"),
-                    "status": "active",
-                    "amount": tx.get("amount", 0),
-                    "started_at": now.isoformat(),
-                    "current_period_end": (now + timedelta(days=30)).isoformat(),
-                }},
-                upsert=True,
-            )
-        elif kind == "package":
-            pass
-
-    await db.payment_transactions.update_one({"session_id": session_id}, {"$set": update})
-
-    return {
-        "status": resp_status,
-        "payment_status": resp_payment_status,
-        "amount_total": resp_amount,
-        "currency": resp_currency,
-        "metadata": resp_metadata,
-    }
-
-
-@api_router.post("/webhook/stripe")
-async def stripe_webhook(request: Request):
-    body = await request.body()
-    sig = request.headers.get("Stripe-Signature", "")
-    origin = str(request.base_url).rstrip("/")
-    key = get_stripe_key()
-    SC, _ = _emergent_stripe()
-
-    if SC:
-        stripe = SC(api_key=key, webhook_url=f"{origin}/api/webhook/stripe")
-        try:
-            evt = await stripe.handle_webhook(body, sig)
-        except Exception as e:
-            logger.warning(f"Stripe webhook verification failed: {e}")
-            raise HTTPException(status_code=400, detail="Invalid webhook")
-        session_id = evt.session_id
-        payment_status = evt.payment_status
-    else:
-        import stripe as stripe_sdk
-        stripe_sdk.api_key = key
-        secret = os.environ.get("STRIPE_WEBHOOK_SECRET")
-        try:
-            if secret:
-                event = stripe_sdk.Webhook.construct_event(body, sig, secret)
-            else:
-                import json as _json
-                event = _json.loads(body)
-        except Exception as e:
-            logger.warning(f"Stripe webhook verification failed: {e}")
-            raise HTTPException(status_code=400, detail="Invalid webhook")
-        etype = event["type"] if isinstance(event, dict) else event.type
-        if etype != "checkout.session.completed":
-            return {"ok": True}
-        obj = event["data"]["object"] if isinstance(event, dict) else event.data.object
-        session_id = obj.get("id") if isinstance(obj, dict) else obj.id
-        payment_status = obj.get("payment_status") if isinstance(obj, dict) else obj.payment_status
-
-    tx = await db.payment_transactions.find_one({"session_id": session_id})
-    if tx and not tx.get("processed") and payment_status == "paid":
-        kind = tx.get("kind")
-        if kind == "booking_deposit" and tx.get("booking_id"):
-            await db.bookings.update_one({"id": tx["booking_id"]}, {"$set": {"status": "confirmed", "deposit_paid": True}})
-        elif kind == "membership":
-            now = datetime.now(timezone.utc)
-            await db.subscriptions.update_one(
-                {"user_id": tx["user_id"], "plan_id": tx.get("plan_id")},
-                {"$set": {
-                    "user_id": tx["user_id"],
-                    "email": tx.get("email", ""),
-                    "plan_id": tx.get("plan_id"),
-                    "status": "active",
-                    "amount": tx.get("amount", 0),
-                    "started_at": now.isoformat(),
-                    "current_period_end": (now + timedelta(days=30)).isoformat(),
-                }},
-                upsert=True,
-            )
-        await db.payment_transactions.update_one(
-            {"session_id": session_id},
-            {"$set": {"processed": True, "payment_status": payment_status}},
-        )
-    return {"ok": True}
-
-
-# ---------------- Payments / Invoices ----------------
-@api_router.get("/payments/mine")
-async def my_payments(user: dict = Depends(get_current_user)):
-    cur = db.payment_transactions.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1)
-    return {"payments": [p async for p in cur]}
-
-
-@api_router.get("/payments")
-async def admin_payments(_: dict = Depends(require_admin)):
-    cur = db.payment_transactions.find({}, {"_id": 0}).sort("created_at", -1)
-    return {"payments": [p async for p in cur]}
-
-
-@api_router.get("/admin/payments")
-async def admin_payments_alias(_: dict = Depends(require_admin)):
-    cur = db.payment_transactions.find({}, {"_id": 0}).sort("created_at", -1)
-    return {"payments": [p async for p in cur]}
-
-
-@api_router.post("/admin/payments/{tx_id}/refund")
-async def admin_refund(tx_id: str, _: dict = Depends(require_admin)):
-    # Mock refund — in production, would call Stripe Refunds API
-    res = await db.payment_transactions.update_one(
-        {"id": tx_id, "payment_status": "paid"},
-        {"$set": {"payment_status": "refunded", "refunded_at": datetime.now(timezone.utc).isoformat()}},
-    )
-    if res.modified_count == 0:
-        raise HTTPException(status_code=400, detail="No paid transaction to refund.")
-    return {"ok": True}
-
-
-# ---------------- Subscriptions ----------------
-@api_router.get("/subscriptions/mine")
-async def my_subscription(user: dict = Depends(get_current_user)):
-    cur = db.subscriptions.find({"user_id": user["id"]}, {"_id": 0}).sort("started_at", -1)
-    subs = [s async for s in cur]
-    return {"subscriptions": subs}
-
-
-@api_router.post("/subscriptions/{sub_id}/cancel")
-async def cancel_my_subscription(sub_id: str, user: dict = Depends(get_current_user)):
-    sub = await db.subscriptions.find_one({"id": sub_id}, {"_id": 0})
-    if not sub:
-        # accept lookup by user+plan if id mismatch
-        sub = await db.subscriptions.find_one({"user_id": user["id"], "plan_id": sub_id}, {"_id": 0})
-    if not sub or (sub.get("user_id") != user["id"] and user.get("role") != "admin"):
-        raise HTTPException(status_code=404, detail="Subscription not found.")
-    await db.subscriptions.update_one(
-        {"user_id": sub["user_id"], "plan_id": sub["plan_id"]},
-        {"$set": {"status": "cancelled", "cancelled_at": datetime.now(timezone.utc).isoformat()}},
-    )
-    return {"ok": True}
-
-
-@api_router.get("/subscriptions")
-async def admin_subscriptions(_: dict = Depends(require_admin)):
-    cur = db.subscriptions.find({}, {"_id": 0}).sort("started_at", -1)
-    return {"subscriptions": [s async for s in cur]}
-
-
-# ---------------- Intake Form ----------------
-@api_router.put("/intake/mine")
-async def save_intake(payload: IntakeIn, user: dict = Depends(get_current_user)):
-    doc = payload.model_dump()
-    doc["user_id"] = user["id"]
-    doc["email"] = user["email"]
-    doc["updated_at"] = datetime.now(timezone.utc).isoformat()
-    await db.intakes.update_one({"user_id": user["id"]}, {"$set": doc}, upsert=True)
-    return {"ok": True}
-
-
-@api_router.get("/intake/mine")
-async def get_intake(user: dict = Depends(get_current_user)):
-    doc = await db.intakes.find_one({"user_id": user["id"]}, {"_id": 0})
-    return doc or {}
-
-
-@api_router.get("/admin/intake/{user_id}")
-async def admin_get_intake(user_id: str, _: dict = Depends(require_admin)):
-    doc = await db.intakes.find_one({"user_id": user_id}, {"_id": 0})
-    return doc or {}
-
-
-# ---------------- Admin: Clients Directory ----------------
-@api_router.get("/admin/clients")
-async def admin_clients(_: dict = Depends(require_admin)):
-    users = await db.users.find({"role": "client"}, {"_id": 0, "password_hash": 0}).to_list(2000)
-    out = []
-    for u in users:
-        bookings = await db.bookings.count_documents({"$or": [{"user_id": u["id"]}, {"email": u["email"]}]})
-        last_booking = await db.bookings.find_one({"$or": [{"user_id": u["id"]}, {"email": u["email"]}]}, {"_id": 0}, sort=[("created_at", -1)])
-        paid = await db.payment_transactions.aggregate([
-            {"$match": {"user_id": u["id"], "payment_status": "paid"}},
-            {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
-        ]).to_list(1)
-        lifetime = paid[0]["total"] if paid else 0
-        sub = await db.subscriptions.find_one({"user_id": u["id"], "status": "active"}, {"_id": 0})
-        out.append({
-            **u,
-            "total_bookings": bookings,
-            "last_booking": last_booking.get("date") if last_booking else None,
-            "lifetime_value": round(float(lifetime), 2),
-            "active_membership": sub.get("plan_id") if sub else None,
-        })
-    out.sort(key=lambda c: c.get("lifetime_value", 0), reverse=True)
-    return {"clients": out}
-
-
-# ---------------- Admin: Revenue Dashboard ----------------
-@api_router.get("/admin/revenue")
-async def admin_revenue(_: dict = Depends(require_admin)):
-    now = datetime.now(timezone.utc)
-    start_today = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    start_week = (now - timedelta(days=7)).isoformat()
-    start_month = (now - timedelta(days=30)).isoformat()
-
-    async def total(match):
-        agg = await db.payment_transactions.aggregate([
-            {"$match": {**match, "payment_status": "paid"}},
-            {"$group": {"_id": None, "total": {"$sum": "$amount"}, "count": {"$sum": 1}}},
-        ]).to_list(1)
-        return {"total": round(float(agg[0]["total"]), 2) if agg else 0, "count": agg[0]["count"] if agg else 0}
-
-    today = await total({"created_at": {"$gte": start_today}})
-    week = await total({"created_at": {"$gte": start_week}})
-    month = await total({"created_at": {"$gte": start_month}})
-    all_time = await total({})
-
-    # Breakdown by service for the month
-    by_service_agg = await db.payment_transactions.aggregate([
-        {"$match": {"payment_status": "paid", "kind": "booking_deposit", "created_at": {"$gte": start_month}}},
-        {"$group": {"_id": "$metadata.service", "total": {"$sum": "$amount"}, "count": {"$sum": 1}}},
-        {"$sort": {"total": -1}},
-    ]).to_list(20)
-
-    active_subs = await db.subscriptions.count_documents({"status": "active"})
-    mrr_agg = await db.subscriptions.aggregate([
-        {"$match": {"status": "active"}},
-        {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
-    ]).to_list(1)
-    mrr = round(float(mrr_agg[0]["total"]), 2) if mrr_agg else 0
-
-    return {
-        "today": today,
-        "week": week,
-        "month": month,
-        "all_time": all_time,
-        "by_service": [{"service": x["_id"] or "Unknown", "total": round(float(x["total"]), 2), "count": x["count"]} for x in by_service_agg],
-        "active_subscriptions": active_subs,
-        "mrr": mrr,
-    }
-
-
-
 # ============================================================
 # ============ NEWS & OFFERS MANAGER ==========================
 # ============================================================
-class NewsIn(BaseModel):
+class BlogIn(BaseModel):
     title: str = Field(min_length=1, max_length=200)
-    summary: Optional[str] = ""
+    slug: Optional[str] = ""
+    excerpt: Optional[str] = ""
     body: Optional[str] = ""
-    image_url: Optional[str] = ""
-    tag: Optional[str] = ""  # e.g. "News", "Event"
+    cover_image_url: Optional[str] = ""
+    tag: Optional[str] = "Blog"
     published: bool = True
+
+
+def slugify(text: str) -> str:
+    text = re.sub(r"[^a-zA-Z0-9]+", "-", (text or "").lower()).strip("-")
+    return text or str(uuid.uuid4())[:8]
 
 
 class OfferIn(BaseModel):
@@ -991,11 +506,19 @@ def _is_within(offer: dict) -> bool:
     return True
 
 
-# ---- Public: news ----
-@api_router.get("/news")
-async def list_news():
-    cur = db.news.find({"published": True}, {"_id": 0}).sort("created_at", -1).limit(30)
+# ---- Public: blog ----
+@api_router.get("/blog")
+async def list_blog():
+    cur = db.blog.find({"published": True}, {"_id": 0, "body": 0}).sort("created_at", -1).limit(60)
     return {"items": [n async for n in cur]}
+
+
+@api_router.get("/blog/{slug}")
+async def get_blog_post(slug: str):
+    post = await db.blog.find_one({"slug": slug, "published": True}, {"_id": 0})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found.")
+    return post
 
 
 # ---- Public: offers ----
@@ -1015,39 +538,49 @@ async def active_banner():
     return {"offer": live[0] if live else None}
 
 
-# ---- Admin: news CRUD ----
-@api_router.get("/admin/news")
-async def admin_list_news(_: dict = Depends(require_admin)):
-    cur = db.news.find({}, {"_id": 0}).sort("created_at", -1)
+# ---- Admin: blog CRUD ----
+@api_router.get("/admin/blog")
+async def admin_list_blog(_: dict = Depends(require_admin)):
+    cur = db.blog.find({}, {"_id": 0}).sort("created_at", -1)
     return {"items": [n async for n in cur]}
 
 
-@api_router.post("/admin/news")
-async def admin_create_news(payload: NewsIn, _: dict = Depends(require_admin)):
+async def _unique_slug(base: str, exclude_id: Optional[str] = None) -> str:
+    slug, n = base, 2
+    while await db.blog.find_one({"slug": slug, "id": {"$ne": exclude_id}}):
+        slug = f"{base}-{n}"
+        n += 1
+    return slug
+
+
+@api_router.post("/admin/blog")
+async def admin_create_blog(payload: BlogIn, _: dict = Depends(require_admin)):
     doc = payload.model_dump()
     doc["id"] = str(uuid.uuid4())
+    doc["slug"] = await _unique_slug(slugify(doc.get("slug") or doc["title"]))
     doc["created_at"] = _now_iso()
     doc["updated_at"] = doc["created_at"]
-    await db.news.insert_one(doc.copy())
+    await db.blog.insert_one(doc.copy())
     doc.pop("_id", None)
     return {"ok": True, "item": doc}
 
 
-@api_router.put("/admin/news/{news_id}")
-async def admin_update_news(news_id: str, payload: NewsIn, _: dict = Depends(require_admin)):
+@api_router.put("/admin/blog/{post_id}")
+async def admin_update_blog(post_id: str, payload: BlogIn, _: dict = Depends(require_admin)):
     update = payload.model_dump()
+    update["slug"] = await _unique_slug(slugify(update.get("slug") or update["title"]), exclude_id=post_id)
     update["updated_at"] = _now_iso()
-    res = await db.news.update_one({"id": news_id}, {"$set": update})
+    res = await db.blog.update_one({"id": post_id}, {"$set": update})
     if res.matched_count == 0:
-        raise HTTPException(status_code=404, detail="News item not found.")
-    return {"ok": True}
+        raise HTTPException(status_code=404, detail="Post not found.")
+    return {"ok": True, "slug": update["slug"]}
 
 
-@api_router.delete("/admin/news/{news_id}")
-async def admin_delete_news(news_id: str, _: dict = Depends(require_admin)):
-    res = await db.news.delete_one({"id": news_id})
+@api_router.delete("/admin/blog/{post_id}")
+async def admin_delete_blog(post_id: str, _: dict = Depends(require_admin)):
+    res = await db.blog.delete_one({"id": post_id})
     if res.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="News item not found.")
+        raise HTTPException(status_code=404, detail="Post not found.")
     return {"ok": True}
 
 
@@ -1115,7 +648,7 @@ DEFAULT_CONTENT = {
     "hero.title_part2": "Restore your",
     "hero.title_part2_italic": "calm.",
     "hero.subtitle": "A boutique medical-aesthetics studio led by Cinthia Lariviere Alexandre. Bespoke rituals, advanced injectables and quiet luxury — minutes from Long Island.",
-    "hero.cta_primary": "Book your session",
+    "hero.cta_primary": "Book a consultation",
     "hero.cta_secondary": "View services",
     "hero.counter_to": "200",
     "hero.counter_label": "5-star clients",
@@ -1172,6 +705,11 @@ DEFAULT_CONTENT = {
 
     # Testimonials header
     "testimonials.eyebrow": "Voices",
+
+    # Blog / journal
+    "blog.eyebrow": "Journal",
+    "blog.title": "Notes on skin, science & self-care.",
+    "blog.title_italic": "self-care",
 
     # Offers
     "offers.eyebrow": "Offers",
@@ -1366,12 +904,6 @@ DEFAULT_TESTIMONIALS = [
     {"id": "t4", "order": 4, "name": "Camille S.", "text": "From the moment I sat down to the goodbye at the door — pure luxury. The deep tissue massage melted months of tension.", "rating": 5},
 ]
 
-DEFAULT_PLANS = [
-    {"id": "first-visit", "order": 1, "badge": "New Client", "title": "First Visit Ritual", "price": "$120", "unit": "", "subtitle": "One-time · Save $25", "perks": ["30-min consult with Cinthia", "Signature facial", "Take-home serum"], "dark": False, "amount": 120.00, "recurring": False},
-    {"id": "glow", "order": 2, "badge": "Most Loved", "title": "Glow Membership", "price": "$129", "unit": "/mo", "subtitle": "Recurring · Cancel anytime", "perks": ["One facial each month", "15% off retail", "Member-only events", "Priority booking"], "dark": True, "amount": 129.00, "recurring": True},
-    {"id": "couples", "order": 3, "badge": "Limited", "title": "Couple's Retreat", "price": "$320", "unit": "", "subtitle": "One-time · For two", "perks": ["Side-by-side 60-min massage", "Champagne service", "Private suite"], "dark": False, "amount": 320.00, "recurring": False},
-]
-
 DEFAULT_GALLERY = [
     {"id": "g1", "order": 1, "src": "https://images.unsplash.com/photo-1600334129128-685c5582fd35?auto=format&fit=crop&w=1200&q=80", "span": "lg:col-span-2 lg:row-span-2 h-[420px] lg:h-auto", "alt": "Treatment ritual"},
     {"id": "g2", "order": 2, "src": "https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=900&q=80", "span": "h-[260px]", "alt": "Warm candles"},
@@ -1401,7 +933,7 @@ DEFAULT_HERO_IMAGES = [
 ]
 
 DEFAULT_TEAM = [
-    {"id": "tm1", "order": 1, "name": "Cinthia Lariviere Alexandre", "role": "Founder & Lead Aesthetician", "image": "https://customer-assets-jai6qajn.emergentagent.net/job_beauty-reserve-155/artifacts/gge0hg88_WhatsApp%20Image%202026-06-02%20at%205.01.50%20AM.jpeg", "bio": "Cinthia founded CLA on a simple belief: refinement should feel personal. With over a decade of experience in advanced injectables and skin rejuvenation, she curates every ritual herself."},
+    {"id": "tm1", "order": 1, "name": "Cinthia Lariviere Alexandre", "role": "Founder & Lead Aesthetician", "image": "https://images.unsplash.com/photo-1733685372441-c3a2a6e3222c?crop=entropy&cs=srgb&fm=jpg&q=85", "bio": "Cinthia founded CLA on a simple belief: refinement should feel personal. With over a decade of experience in advanced injectables and skin rejuvenation, she curates every ritual herself."},
 ]
 
 
@@ -1410,12 +942,6 @@ DEFAULT_TEAM = [
 async def get_testimonials():
     items = await db.testimonials.find({}, {"_id": 0}).sort("order", 1).to_list(200)
     return {"testimonials": items or DEFAULT_TESTIMONIALS}
-
-
-@api_router.get("/plans")
-async def get_plans():
-    items = await db.plans.find({}, {"_id": 0}).sort("order", 1).to_list(50)
-    return {"plans": items or DEFAULT_PLANS}
 
 
 @api_router.get("/gallery")
@@ -1454,7 +980,6 @@ def _coll_for(kind: str):
     mapping = {
         "services": db.services,
         "testimonials": db.testimonials,
-        "plans": db.plans,
         "gallery": db.gallery,
         "treatments_menu": db.treatments_menu,
         "hero_images": db.hero_images,
@@ -1474,7 +999,6 @@ async def admin_cms_list(kind: str, _: dict = Depends(require_admin)):
         defaults = {
             "services": SERVICES,
             "testimonials": DEFAULT_TESTIMONIALS,
-            "plans": DEFAULT_PLANS,
             "gallery": DEFAULT_GALLERY,
             "treatments_menu": DEFAULT_TREATMENTS_MENU,
             "hero_images": DEFAULT_HERO_IMAGES,
@@ -1500,7 +1024,6 @@ async def admin_cms_seed(kind: str, _: dict = Depends(require_admin)):
     defaults = {
         "services": SERVICES,
         "testimonials": DEFAULT_TESTIMONIALS,
-        "plans": DEFAULT_PLANS,
         "gallery": DEFAULT_GALLERY,
         "treatments_menu": DEFAULT_TREATMENTS_MENU,
         "hero_images": DEFAULT_HERO_IMAGES,
@@ -1564,8 +1087,8 @@ storage_key: Optional[str] = None
 ALLOWED_IMAGE_MIME = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 ALLOWED_VIDEO_MIME = {"video/mp4", "video/webm", "video/quicktime", "video/ogg"}
 ALLOWED_UPLOAD_MIME = ALLOWED_IMAGE_MIME | ALLOWED_VIDEO_MIME
-MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 8 MB (images)
-MAX_VIDEO_BYTES = 64 * 1024 * 1024  # 64 MB (videos)
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+MAX_VIDEO_BYTES = 50 * 1024 * 1024
 
 
 def init_storage() -> Optional[str]:
@@ -1693,18 +1216,103 @@ async def list_uploads(admin: dict = Depends(require_admin)):
     return {"items": items}
 
 
+@api_router.delete("/admin/uploads/{file_id}")
+async def delete_upload(file_id: str, _: dict = Depends(require_admin)):
+    res = await db.files.update_one({"id": file_id}, {"$set": {"is_deleted": True}})
+    return {"ok": True, "deleted": res.modified_count}
+
+
+# ---------------- Analytics ----------------
+class TrackIn(BaseModel):
+    path: str = "/"
+    visitor_id: str = Field(min_length=4, max_length=80)
+    referrer: Optional[str] = ""
+
+
+@api_router.post("/track")
+async def track_view(payload: TrackIn, request: Request):
+    now = datetime.now(timezone.utc)
+    await db.page_views.insert_one({
+        "id": str(uuid.uuid4()),
+        "path": payload.path[:200],
+        "visitor_id": payload.visitor_id,
+        "referrer": (payload.referrer or "")[:300],
+        "ua": request.headers.get("user-agent", "")[:200],
+        "day": now.strftime("%Y-%m-%d"),
+        "created_at": now.isoformat(),
+    })
+    return {"ok": True}
+
+
+@api_router.get("/admin/stats")
+async def admin_stats(days: int = 30, _: dict = Depends(require_admin)):
+    days = max(7, min(days, 90))
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(days=days - 1)
+    start_day = start.strftime("%Y-%m-%d")
+    day_keys = [(start + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
+
+    views_agg = await db.page_views.aggregate([
+        {"$match": {"day": {"$gte": start_day}}},
+        {"$group": {"_id": "$day", "views": {"$sum": 1}, "visitors": {"$addToSet": "$visitor_id"}}},
+    ]).to_list(200)
+    views_map = {x["_id"]: {"views": x["views"], "visitors": len(x["visitors"])} for x in views_agg}
+
+    leads_agg = await db.leads.aggregate([
+        {"$match": {"created_at": {"$gte": start.isoformat()}}},
+        {"$group": {"_id": {"$substr": ["$created_at", 0, 10]}, "count": {"$sum": 1}}},
+    ]).to_list(200)
+    leads_map = {x["_id"]: x["count"] for x in leads_agg}
+
+    series = [{"day": d, "views": views_map.get(d, {}).get("views", 0), "visitors": views_map.get(d, {}).get("visitors", 0), "inquiries": leads_map.get(d, 0)} for d in day_keys]
+
+    status_agg = await db.leads.aggregate([{"$group": {"_id": "$status", "count": {"$sum": 1}}}]).to_list(20)
+    top_pages = await db.page_views.aggregate([
+        {"$match": {"day": {"$gte": start_day}}},
+        {"$group": {"_id": "$path", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}}, {"$limit": 6},
+    ]).to_list(6)
+    interest_agg = await db.leads.aggregate([
+        {"$match": {"interest": {"$nin": ["", None]}}},
+        {"$group": {"_id": "$interest", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}}, {"$limit": 6},
+    ]).to_list(6)
+
+    today = now.strftime("%Y-%m-%d")
+    total_views = sum(x["views"] for x in series)
+    unique_visitors = len(await db.page_views.distinct("visitor_id", {"day": {"$gte": start_day}}))
+    return {
+        "days": days,
+        "series": series,
+        "totals": {
+            "views": total_views,
+            "visitors": unique_visitors,
+            "views_today": views_map.get(today, {}).get("views", 0),
+            "inquiries": await db.leads.count_documents({}),
+            "inquiries_new": await db.leads.count_documents({"status": "new"}),
+            "inquiries_period": sum(leads_map.values()),
+            "gallery": await db.gallery.count_documents({}),
+            "blog_posts": await db.blog.count_documents({"published": True}),
+            "uploads": await db.files.count_documents({"is_deleted": False}),
+            "offers": await db.offers.count_documents({"active": True}),
+        },
+        "lead_status": [{"status": x["_id"] or "new", "count": x["count"]} for x in status_agg],
+        "top_pages": [{"path": x["_id"], "count": x["count"]} for x in top_pages],
+        "top_interests": [{"interest": x["_id"], "count": x["count"]} for x in interest_agg],
+        "recent_leads": await db.leads.find({}, {"_id": 0}).sort("created_at", -1).limit(6).to_list(6),
+    }
+
+
 # ---------------- Startup ----------------
 @app.on_event("startup")
 async def startup():
     await db.users.create_index("email", unique=True)
-    await db.bookings.create_index([("date", 1), ("time", 1)])
     await db.login_attempts.create_index("key")
     await db.chat_messages.create_index([("session_id", 1), ("created_at", 1)])
-    await db.payment_transactions.create_index("session_id", unique=True)
-    await db.payment_transactions.create_index("user_id")
-    await db.subscriptions.create_index([("user_id", 1), ("plan_id", 1)], unique=True)
+    await db.page_views.create_index([("day", 1), ("visitor_id", 1)])
+    await db.blog.create_index("slug", unique=True)
+    await db.leads.create_index("created_at")
     await db.content.create_index("key", unique=True)
-    await db.intakes.create_index("user_id", unique=True)
     await db.files.create_index("storage_path", unique=True)
     # Initialize object storage (non-fatal if it fails — uploads will return 503)
     try:

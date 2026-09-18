@@ -40,17 +40,17 @@ export default function OfferBanner() {
                     exit={{ y: -50, opacity: 0 }}
                     transition={{ duration: 0.45, ease: [0.22, 0.68, 0.28, 1] }}
                     data-testid="offer-banner"
-                    className="fixed top-0 inset-x-0 z-50 text-ivory"
+                    className="fixed top-0 inset-x-0 z-50 text-noir"
                     style={{
                         background: `linear-gradient(90deg, ${offer.accent_color || "#D4AF37"}, #B8932E)`,
                     }}
                 >
-                    <div className="max-w-7xl mx-auto px-5 sm:px-8 py-2.5 flex items-center gap-3">
+                    <div className="wrap py-2.5 flex items-center gap-3">
                         <Sparkles className="w-4 h-4 shrink-0" />
                         <div className="flex-1 flex flex-wrap items-center gap-x-3 gap-y-1">
                             <span className="font-serif text-sm sm:text-base leading-tight">{offer.title}</span>
                             {offer.description && (
-                                <span className="text-ivory/85 text-xs sm:text-sm leading-tight">— {offer.description}</span>
+                                <span className="text-noir/75 text-xs sm:text-sm leading-tight">— {offer.description}</span>
                             )}
                         </div>
                         {offer.cta_url && (
@@ -58,7 +58,7 @@ export default function OfferBanner() {
                                 href={offer.cta_url}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="hidden sm:inline-flex items-center gap-1.5 bg-charcoal/25 hover:bg-charcoal/40 rounded-full px-3 py-1 text-[11px] uppercase tracking-[0.24em] transition-colors"
+                                className="hidden sm:inline-flex items-center gap-1.5 bg-noir/20 hover:bg-noir/35 rounded-full px-3 py-1 text-[11px] uppercase tracking-[0.24em] transition-colors"
                             >
                                 {offer.cta_label || "Learn more"} <ArrowUpRight className="w-3 h-3" />
                             </a>
@@ -66,7 +66,7 @@ export default function OfferBanner() {
                         <button
                             onClick={dismiss}
                             aria-label="Dismiss offer"
-                            className="p-1 rounded-full hover:bg-charcoal/25 transition-colors"
+                            className="p-1 rounded-full hover:bg-noir/20 transition-colors"
                         >
                             <X className="w-4 h-4" />
                         </button>

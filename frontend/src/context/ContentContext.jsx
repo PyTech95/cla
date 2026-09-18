@@ -2,14 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback, use
 import api from "@/lib/api";
 
 const ContentContext = createContext({});
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-
-// Convert a value to an absolute URL if it's a relative API path
-function abs(v) {
-    if (typeof v !== "string") return v;
-    if (v.startsWith("/api/")) return `${BACKEND_URL}${v}`;
-    return v;
-}
+import { toAbs as abs } from "@/lib/media";
 
 // Walk the content object and absolutise any *_url keys
 function normalizeContent(raw) {
