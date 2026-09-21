@@ -177,3 +177,95 @@ section[id] { scroll-margin-top: 84px; }
     .reveal { opacity: 1 !important; transform: none !important; }
 }
 [data-debug-wrapper="true"] { display: contents !important; }
+
+/* ================= LIGHT THEME (white background — toggled from Admin → Settings) ================= */
+.theme-light {
+    --background: 40 33% 98%;
+    --foreground: 0 0% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 10%;
+    --secondary: 40 20% 94%;
+    --secondary-foreground: 0 0% 10%;
+    --muted: 40 18% 93%;
+    --muted-foreground: 30 6% 38%;
+    --border: 30 10% 86%;
+    --input: 30 10% 84%;
+}
+.theme-light body { background-color: #FBFAF7; color: #1B1A17; }
+.theme-light body::before { opacity: 0.03; }
+
+/* Surfaces */
+.theme-light .bg-noir { background-color: #FBFAF7; }
+.theme-light .bg-noir-2 { background-color: #FFFFFF; }
+.theme-light .bg-noir-3 { background-color: #F4F1EA; }
+.theme-light .bg-noir-4 { background-color: #EDE9DF; }
+.theme-light .bg-noir\/20 { background-color: rgba(251,250,247,0.2); }
+.theme-light .bg-noir\/35 { background-color: rgba(251,250,247,0.35); }
+.theme-light .bg-noir\/70 { background-color: rgba(251,250,247,0.7); }
+.theme-light .bg-noir\/80 { background-color: rgba(251,250,247,0.8); }
+.theme-light .bg-noir\/90 { background-color: rgba(251,250,247,0.9); }
+.theme-light .bg-noir-2\/95 { background-color: rgba(255,255,255,0.95); }
+.theme-light .hover\:bg-noir\/20:hover { background-color: rgba(251,250,247,0.2); }
+.theme-light .hover\:bg-noir\/35:hover { background-color: rgba(251,250,247,0.35); }
+
+/* Text: bone (cream) → deep charcoal */
+.theme-light .text-bone { color: #1B1A17; }
+.theme-light .text-bone\/90 { color: rgba(27,26,23,0.9); }
+.theme-light .text-bone\/85 { color: rgba(27,26,23,0.85); }
+.theme-light .text-bone\/80 { color: rgba(27,26,23,0.8); }
+.theme-light .text-bone\/75 { color: rgba(27,26,23,0.75); }
+.theme-light .text-bone\/70 { color: rgba(27,26,23,0.7); }
+.theme-light .text-bone\/65 { color: rgba(27,26,23,0.65); }
+.theme-light .text-bone\/60 { color: rgba(27,26,23,0.6); }
+.theme-light .text-bone\/55 { color: rgba(27,26,23,0.55); }
+.theme-light .text-bone\/50 { color: rgba(27,26,23,0.5); }
+.theme-light .text-bone\/45 { color: rgba(27,26,23,0.45); }
+.theme-light .text-bone\/40 { color: rgba(27,26,23,0.4); }
+.theme-light .text-bone\/30 { color: rgba(27,26,23,0.3); }
+.theme-light .hover\:text-bone:hover { color: #1B1A17; }
+.theme-light [class*="placeholder-bone"]::placeholder { color: rgba(27,26,23,0.4); }
+
+/* Borders & translucent white overlays → soft charcoal */
+.theme-light [class*="border-white"] { border-color: rgba(27,26,23,0.14); }
+.theme-light [class*="divide-white"] > * + * { border-color: rgba(27,26,23,0.08); }
+.theme-light [class*="bg-white/"] { background-color: rgba(27,26,23,0.06); }
+.theme-light .hover\:bg-white\/5:hover { background-color: rgba(27,26,23,0.06); }
+
+/* Gold accents: deepen the lightest tones so they read on white */
+.theme-light .text-gold-light { color: #B8932E; }
+.theme-light .hover\:text-gold-light:hover { color: #8A6D1F; }
+.theme-light .text-shimmer {
+    background-image: linear-gradient(110deg, #8A6D1F 0%, #B8932E 20%, #D4AF37 45%, #7A5E18 50%, #D4AF37 55%, #B8932E 80%, #8A6D1F 100%);
+}
+
+/* Component primitives */
+.theme-light .card-dark {
+    background: #FFFFFF;
+    border: 1px solid rgba(27,26,23,0.09);
+    box-shadow: 0 12px 32px -20px rgba(27,26,23,0.22);
+}
+.theme-light .card-dark:hover { border-color: rgba(184,147,46,0.55); box-shadow: 0 30px 60px -30px rgba(184,147,46,0.35); }
+.theme-light .btn-ghost { color: #1B1A17; border-color: rgba(27,26,23,0.28); }
+.theme-light .btn-ghost:hover { border-color: #B8932E; color: #8A6D1F; background-color: rgba(212,175,55,0.1); }
+.theme-light .field { background: #FFFFFF; border-color: rgba(27,26,23,0.16); color: #1B1A17; }
+.theme-light .field::placeholder { color: rgba(27,26,23,0.42); }
+.theme-light .field:focus { border-color: #B8932E; background: rgba(212,175,55,0.06); }
+.theme-light select.field option { background: #FFFFFF; color: #1B1A17; }
+.theme-light .hair { background: rgba(27,26,23,0.1); }
+.theme-light .gold-frame::after { border-color: rgba(184,147,46,0.7); }
+.theme-light .map-dark { filter: none; }
+.theme-light .prose-dark p, .theme-light .prose-dark ul, .theme-light .prose-dark li { color: rgba(27,26,23,0.8); }
+.theme-light .prose-dark h2, .theme-light .prose-dark h3 { color: #1B1A17; }
+.theme-light .prose-dark strong { color: #8A6D1F; }
+
+/* Gradient fades into background (noir → light) */
+.theme-light .from-noir { --tw-gradient-from: #FBFAF7 var(--tw-gradient-from-position); --tw-gradient-to: rgba(251,250,247,0) var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
+.theme-light .from-noir\/85 { --tw-gradient-from: rgba(251,250,247,0.85) var(--tw-gradient-from-position); --tw-gradient-to: rgba(251,250,247,0) var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
+.theme-light .from-noir\/70 { --tw-gradient-from: rgba(251,250,247,0.7) var(--tw-gradient-from-position); --tw-gradient-to: rgba(251,250,247,0) var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
+.theme-light .from-noir\/40 { --tw-gradient-from: rgba(251,250,247,0.4) var(--tw-gradient-from-position); --tw-gradient-to: rgba(251,250,247,0) var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
+.theme-light .via-noir\/10 { --tw-gradient-stops: var(--tw-gradient-from), rgba(251,250,247,0.1) var(--tw-gradient-via-position), var(--tw-gradient-to); }
+.theme-light .via-noir\/60 { --tw-gradient-stops: var(--tw-gradient-from), rgba(251,250,247,0.6) var(--tw-gradient-via-position), var(--tw-gradient-to); }
+.theme-light .via-noir\/75 { --tw-gradient-stops: var(--tw-gradient-from), rgba(251,250,247,0.75) var(--tw-gradient-via-position), var(--tw-gradient-to); }
+.theme-light .to-noir { --tw-gradient-to: #FBFAF7 var(--tw-gradient-to-position); }

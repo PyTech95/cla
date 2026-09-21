@@ -1,7 +1,40 @@
 import React, { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { Moon, Sun } from "lucide-react";
 import api from "@/lib/api";
 import { PageHeader, Card, Btn, Field, Toggle } from "@/components/admin/ui";
+
+function Appearance() {
+    const [theme, setTheme] = useState("dark");
+    const [busy, setBusy] = useState(false);
+
+    useEffect(() => {
+        api.get("/settings/appearance").then(({ data }) => setTheme(data?.theme === "light" ? "light" : "dark")).catch(() => {});
+    }, []);
+
+    const apply = async (next) => {
+        if (busy || next === theme) return;
+        setBusy(true);
+        try {
+            await api.put("/admin/settings/appearance", { theme: next });
+            setTheme(next);
+            document.documentElement.classList.toggle("theme-light", next === "light");
+            toast.success(next === "light" ? "Website switched to a white background." : "Website switched back to the dark look.");
+        } catch { toast.error("Could not save appearance."); }
+        finally { setBusy(false); }
+    };
+
+    return (
+        <Card className="p-6" data-testid="settings-appearance">
+            <h2 className="font-serif text-2xl mb-1">Website appearance</h2>
+            <p className="text-bone/50 text-sm mb-5">Switch the whole website between the classic black look and a clean white background.</p>
+            <div className="flex flex-wrap gap-2">
+                <Btn variant={theme === "dark" ? "gold" : "ghost"} disabled={busy} onClick={() => apply("dark")} data-testid="theme-dark-btn"><Moon className="w-3.5 h-3.5" /> Dark (black)</Btn>
+                <Btn variant={theme === "light" ? "gold" : "ghost"} disabled={busy} onClick={() => apply("light")} data-testid="theme-light-btn"><Sun className="w-3.5 h-3.5" /> Light (white)</Btn>
+            </div>
+        </Card>
+    );
+}
 
 function Smtp() {
     const [s, setS] = useState({ host: "smtp.gmail.com", port: 587, username: "", app_password: "", from_name: "CLA Aesthetics & Wellness", from_email: "", recipients: "", enabled: false });
@@ -77,7 +110,8 @@ function Password() {
 export default function SettingsAdmin() {
     return (
         <div data-testid="admin-settings" className="space-y-6 max-w-4xl">
-            <PageHeader title="Settings" sub="Notifications and account security." />
+            <PageHeader title="Settings" sub="Appearance, notifications and account security." />
+            <Appearance />
             <Smtp />
             <Password />
         </div>

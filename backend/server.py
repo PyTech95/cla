@@ -379,6 +379,25 @@ async def refresh_token(request: Request, response: Response):
         raise HTTPException(status_code=401, detail="Invalid refresh")
 
 
+# ---------------- Appearance (site theme) ----------------
+class AppearanceSettings(BaseModel):
+    theme: str = "dark"  # "dark" | "light"
+
+
+@api_router.get("/settings/appearance")
+async def get_appearance():
+    doc = await db.settings.find_one({"key": "appearance"}, {"_id": 0}) or {}
+    theme = (doc.get("value") or {}).get("theme", "dark")
+    return {"theme": theme if theme in ("dark", "light") else "dark"}
+
+
+@api_router.put("/admin/settings/appearance")
+async def save_appearance(payload: AppearanceSettings, _: dict = Depends(require_admin)):
+    theme = payload.theme if payload.theme in ("dark", "light") else "dark"
+    await db.settings.update_one({"key": "appearance"}, {"$set": {"key": "appearance", "value": {"theme": theme}}}, upsert=True)
+    return {"ok": True, "theme": theme}
+
+
 # ---------------- Admin Settings (SMTP) ----------------
 @api_router.get("/admin/settings/smtp")
 async def get_smtp(_: dict = Depends(require_admin)):

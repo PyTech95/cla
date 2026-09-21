@@ -1,7 +1,8 @@
-import React from "react";
+import React, { useEffect } from "react";
 import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
+import api from "@/lib/api";
 import { AuthProvider } from "@/context/AuthContext";
 import { ContentProvider } from "@/context/ContentContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
@@ -14,11 +15,21 @@ import LegalPage from "@/pages/LegalPage";
 import BlogPost from "@/pages/BlogPost";
 import { AboutPage, ServicesPage, PortfolioPage, BlogPage, ReviewsPage, ContactPage } from "@/pages/SitePages";
 
+function ThemeSync() {
+    useEffect(() => {
+        api.get("/settings/appearance").then(({ data }) => {
+            document.documentElement.classList.toggle("theme-light", data?.theme === "light");
+        }).catch(() => {});
+    }, []);
+    return null;
+}
+
 function App() {
     return (
         <ContentProvider>
             <AuthProvider>
                 <div className="App">
+                    <ThemeSync />
                     <BrowserRouter>
                         <Analytics />
                         <OfferBanner />
