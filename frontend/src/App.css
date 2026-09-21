@@ -1,0 +1,2 @@
+/* Reset legacy CRA styles. App-level styles live in index.css and Tailwind. */
+.App { min-height: 100vh; }

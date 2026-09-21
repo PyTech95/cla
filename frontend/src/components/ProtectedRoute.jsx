@@ -1,0 +1,20 @@
+import React from "react";
+import { Navigate, useLocation } from "react-router-dom";
+import { useAuth } from "@/context/AuthContext";
+
+export default function ProtectedRoute({ children, requireRole }) {
+    const { user, loading } = useAuth();
+    const location = useLocation();
+
+    if (loading || user === null) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-noir">
+                <div className="text-bone/60 font-serif text-2xl">Loading…</div>
+            </div>
+        );
+    }
+    if (!user || (requireRole && user.role !== requireRole)) {
+        return <Navigate to="/login" state={{ from: location.pathname }} replace />;
+    }
+    return children;
+}
