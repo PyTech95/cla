@@ -23,3 +23,9 @@ See `/app/memory/test_credentials.md`. Admin: admin@cla-aesthetics.com / JAiXcb4
 - P1: SMTP for inquiry email notifications is disabled until configured in Admin → Settings → SMTP (Gmail app password).
 - P2: Seed/sample CMS data loads by default; admin can reseed or edit.
 - P2: Change default admin password after first login.
+
+## Iteration 2 (2026-09-21) — Site appearance (white theme) toggle
+- Added theme system: backend `GET /api/settings/appearance` (public) + `PUT /api/admin/settings/appearance` (admin), stored in `db.settings` key `appearance`.
+- Admin → Settings → "Website appearance" card with Dark (black) / Light (white) buttons; applies instantly and persists.
+- `index.css` `.theme-light` override layer remaps the dark palette (noir→white surfaces, bone→charcoal text, borders, fields, cards, gradient fades); photo overlays (`keep-dark`) keep dark fades so light captions stay readable.
+- Theme currently set to **light (white)** per user request. Verified by testing agent (100% backend, core flows pass, persists across reloads).

@@ -13,7 +13,7 @@ export function PageBanner({ slug }) {
     const { content } = useContent();
     const img = toAbs(t(content, `page.${slug}.banner_url`, ""));
     return (
-        <section data-testid={`page-banner-${slug}`} className="relative pt-32 pb-14 sm:pt-40 sm:pb-20 overflow-hidden border-b border-white/5">
+        <section data-testid={`page-banner-${slug}`} className="relative pt-32 pb-14 sm:pt-40 sm:pb-20 overflow-hidden border-b border-white/5 keep-dark">
             {img && <div aria-hidden className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url(${img})`, filter: "brightness(0.35) grayscale(0.2)" }} />}
             <div aria-hidden className="absolute inset-0 bg-gradient-to-b from-noir/40 via-noir/60 to-noir" />
             <div aria-hidden className="pointer-events-none absolute -top-24 right-[5%] w-[26rem] h-[26rem] rounded-full bg-gold/10 blur-[120px]" />

@@ -58,7 +58,7 @@ function Strip({ items, onOpen }) {
     return (
         <div ref={ref} data-testid="gallery-marquee" onMouseEnter={pause} onMouseLeave={resume} onTouchStart={pause} onTouchEnd={resume} className="flex gap-4 overflow-x-auto pb-3 no-scrollbar cursor-grab">
             {loop.map((item, i) => (
-                <button key={`${item.id || item.src}-${i}`} data-testid={i < items.length ? `gallery-item-${i}` : undefined} onClick={() => onOpen(i % items.length)} className="relative shrink-0 w-[240px] sm:w-[300px] h-[320px] sm:h-[380px] overflow-hidden rounded-[20px] border border-white/10 group bg-noir-3">
+                <button key={`${item.id || item.src}-${i}`} data-testid={i < items.length ? `gallery-item-${i}` : undefined} onClick={() => onOpen(i % items.length)} className="relative shrink-0 w-[240px] sm:w-[300px] h-[320px] sm:h-[380px] overflow-hidden rounded-[20px] border border-white/10 group bg-noir-3 keep-dark">
                     <MediaThumb item={item} className="absolute inset-0 w-full h-full object-cover image-kenburns" />
                     {mediaKind(item) !== "image" && (
                         <span className="absolute top-3 left-3 w-9 h-9 rounded-full bg-noir/70 backdrop-blur text-gold border border-gold/40 flex items-center justify-center"><Play className="w-4 h-4" /></span>
@@ -117,7 +117,7 @@ export default function Gallery({ linkTo, full }) {
                     {items.length === 0 && <p className="text-bone/45">Gallery coming soon.</p>}
                     <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
                         {items.map((g, i) => (
-                            <button key={g.id || i} data-testid={`gallery-item-${i}`} onClick={() => openLightbox(i)} className="relative h-[180px] sm:h-[240px] lg:h-[280px] overflow-hidden rounded-[16px] border border-white/10 group bg-noir-3">
+                            <button key={g.id || i} data-testid={`gallery-item-${i}`} onClick={() => openLightbox(i)} className="relative h-[180px] sm:h-[240px] lg:h-[280px] overflow-hidden rounded-[16px] border border-white/10 group bg-noir-3 keep-dark">
                                 <MediaThumb item={g} className="absolute inset-0 w-full h-full object-cover image-kenburns" />
                                 {mediaKind(g) !== "image" && <span className="absolute top-3 left-3 w-8 h-8 rounded-full bg-noir/70 text-gold border border-gold/40 flex items-center justify-center"><Play className="w-3.5 h-3.5" /></span>}
                                 {g.alt && <span className="absolute bottom-0 inset-x-0 p-3 text-left text-sm font-serif text-bone bg-gradient-to-t from-noir/85 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">{g.alt}</span>}

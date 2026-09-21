@@ -111,7 +111,7 @@ export default function Hero() {
 
                 <motion.div initial={{ opacity: 0, scale: 0.94, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} transition={{ duration: 1.1, delay: 0.25, ease: [0.22, 0.68, 0.28, 1] }} className="lg:col-span-5 flex justify-center lg:justify-end">
                     <div className="relative w-full max-w-md gold-frame rounded-[26px]">
-                        <div className="relative overflow-hidden rounded-[26px] border border-white/10 bg-noir-3">
+                        <div className="relative overflow-hidden rounded-[26px] border border-white/10 bg-noir-3 keep-dark">
                             <div className="relative w-full h-[360px] sm:h-[480px]">
                                 {slides.map((img, idx) => (
                                     <img key={img.id || img.src} src={toAbs(img.src)} alt={img.alt || "Inside the CLA Aesthetics studio"} className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ${idx === active ? "opacity-100" : "opacity-0"}`} />
