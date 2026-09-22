@@ -1,0 +1,20 @@
+{
+  "summary": "Verified header scroll bug fix in light theme. Header background is rgba(255,255,255,0.85) when scrolled on homepage and on subpages (/about). Dark theme regression: header is rgba(7,7,7,0.835) when scrolled (correct). Theme restored to 'light' at end (GET /api/settings/appearance returns {theme:'light'}).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A", "frontend": "100%"},
+  "test_credentials": "admin@cla-aesthetics.com / JAiXcb4UuHxSYinW",
+  "seed_data_creation": "",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Header light-theme scroll bug is fixed. bg-noir/85 correctly remaps to white translucent in light theme via .theme-light override in index.css. Dark theme unchanged. Final theme left as 'light'.",
+  "rca of the issue": "Original: Nav.jsx header used tailwind 'bg-noir/85' when scrolled; the .theme-light override block in index.css only remapped 'bg-noir' but not the alpha-suffixed 'bg-noir/85' selector, so scrolled header stayed black. Fix: added '.theme-light .bg-noir\\/85 { background-color: rgba(255,255,255,0.85) }' plus a soft shadow to header.bg-noir/85 in light theme. Verified via computed styles on / and /about."
+}
