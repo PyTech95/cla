@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import api from "@/lib/api";
 import { useContent, t } from "@/context/ContentContext";
 import { SectionTitle } from "@/components/sections/About";
-
+import { Link } from "react-router-dom";
 const HOURS = [["Monday – Friday", "10:00 AM – 8:00 PM"], ["Saturday", "9:00 AM – 6:00 PM"], ["Sunday", "By appointment"]];
 
 function InquiryForm() {
@@ -12,6 +12,17 @@ function InquiryForm() {
     const [form, setForm] = useState({ name: "", phone: "", email: "", interest: "", contact_via: "call", message: "" });
     const [busy, setBusy] = useState(false);
     const [done, setDone] = useState(false);
+
+        const { content } = useContent();
+
+    const [smsConsent, setSmsConsent] = useState(false);
+
+    const supportPhone = t(content, "brand.phone", "(212) 7664333");
+    const supportPhoneLink = t(
+        content,
+        "brand.phone_link",
+        "+(212) 7664333"
+    );
 
     useEffect(() => {
         api.get("/treatments-menu").then(({ data }) => setServices((data.items || []).map((x) => x.name))).catch(() => {});
@@ -22,9 +33,16 @@ function InquiryForm() {
     const submit = async (e) => {
         e.preventDefault();
         if (!form.name.trim() || !form.phone.trim()) return toast.error("Please add your name and phone number.");
+                if (!smsConsent) {
+            toast.error("Please check the SMS consent box to continue.");
+            return;
+        }
         setBusy(true);
         try {
-            await api.post("/leads", form);
+                        await api.post("/leads", {
+                ...form,
+                sms_consent: smsConsent,
+            });
             setDone(true);
             toast.success("Thank you — we'll be in touch shortly.");
         } catch {
@@ -38,7 +56,7 @@ function InquiryForm() {
                 <CheckCircle2 className="w-10 h-10 text-gold mx-auto mb-4" />
                 <p className="font-serif text-2xl text-bone">Inquiry received.</p>
                 <p className="text-bone/60 mt-2 text-sm">Cinthia's team will reach out to you within one business day.</p>
-                <button onClick={() => { setDone(false); setForm({ name: "", phone: "", email: "", interest: "", contact_via: "call", message: "" }); }} className="btn-ghost rounded-full px-5 py-2 text-[11px] uppercase tracking-widest mt-6">Send another</button>
+                <button onClick={() => { setDone(false); setSmsConsent(false); setForm({ name: "", phone: "", email: "", interest: "", contact_via: "call", message: "" }); }} className="btn-ghost rounded-full px-5 py-2 text-[11px] uppercase tracking-widest mt-6">Send another</button>
             </div>
         );
     }
@@ -59,7 +77,66 @@ function InquiryForm() {
                     <option value="Consultation">General consultation</option>
                 </select>
             </div>
-            <textarea data-testid="inquiry-message" className="field min-h-[110px]" placeholder="Your message (optional)" value={form.message} onChange={set("message")} />
+                        <div className="flex items-start gap-3 text-xs leading-relaxed text-bone/70">
+                <input
+                    id="sms-consent"
+                    name="sms_consent"
+                    type="checkbox"
+                    checked={smsConsent}
+                    onChange={(event) => {
+                        setSmsConsent(event.target.checked);
+                    }}
+                    required
+                    aria-describedby="sms-consent-details"
+                    className="mt-1 h-4 w-4 shrink-0 accent-[#D4AF37]"
+                />
+
+                <div>
+                    <label
+                        htmlFor="sms-consent"
+                        className="cursor-pointer"
+                    >
+                        By checking this box, you agree to receive SMS
+                        messages from CLA Aesthetics &amp; Wellness
+                        related to conversations, appointment reminders
+                        and follow-up messages.
+                    </label>{" "}
+
+                    <span id="sms-consent-details">
+                        You may reply STOP to opt out at any time.
+                        Reply HELP for assistance or call{" "}
+                        <a
+                            href={`tel:${supportPhoneLink}`}
+                            className="text-gold underline"
+                        >
+                            {supportPhone}
+                        </a>.
+                        {" "}Message and data rates may apply.
+                        Message frequency will vary.
+                        Learn more in our{" "}
+
+                        <Link
+                            to="/privacy"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-gold underline"
+                        >
+                            Privacy Policy
+                        </Link>
+
+                        {" "}and{" "}
+
+                        <Link
+                            to="/terms"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-gold underline"
+                        >
+                            Terms &amp; Conditions
+                        </Link>.
+                    </span>
+                </div>
+            </div>
             <div className="flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
                 <div className="flex items-center gap-4 text-sm text-bone/70">
                     <span className="text-[11px] uppercase tracking-widest text-bone/45">Reach me by</span>

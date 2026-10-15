@@ -4,7 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { useContent, t } from "@/context/ContentContext";
 
 const TITLES = {
-    privacy: "Privacy Policy", terms: "Terms of Service", refund: "Refund & Cancellation Policy", cookies: "Cookie Policy",
+    privacy: "Privacy Policy", terms: "Terms & Conditions", refund: "Refund & Cancellation Policy", cookies: "Cookie Policy",
     medical_disclaimer: "Medical Disclaimer", accessibility: "Accessibility Statement", contact: "Contact",
 };
 

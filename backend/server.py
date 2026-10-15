@@ -111,6 +111,7 @@ class LeadIn(BaseModel):
     contact_via: Optional[str] = "call"
     message: Optional[str] = ""
     source: Optional[str] = "website"
+    sms_consent: bool = False
 
 
 class SmtpSettings(BaseModel):
@@ -250,6 +251,8 @@ async def create_lead(payload: LeadIn, background: BackgroundTasks):
         "contact_via": payload.contact_via or "call",
         "message": payload.message or "",
         "source": payload.source or "website",
+        "sms_consent": payload.sms_consent,
+        "sms_consent_recorded_at": datetime.now(timezone.utc).isoformat(),
         "status": "new",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
