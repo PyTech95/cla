@@ -91,51 +91,53 @@ function InquiryForm() {
                     className="mt-1 h-4 w-4 shrink-0 accent-[#D4AF37]"
                 />
 
-                <div>
-                    <label
-                        htmlFor="sms-consent"
-                        className="cursor-pointer"
-                    >
-                        By checking this box, you agree to receive SMS
-                        messages from CLA Aesthetics &amp; Wellness
-                        related to conversations, appointment reminders
-                        and follow-up messages.
-                    </label>{" "}
+                
+<div>
+    <label
+        htmlFor="sms-consent"
+        className="cursor-pointer"
+    >
+        By checking this box, you agree to receive SMS
+        messages from CLA Aesthetics &amp; Wellness
+        related to conversations, appointment reminders,
+        follow-up messages and marketing.
+    </label>{" "}
 
-                    <span id="sms-consent-details">
-                        You may reply STOP to opt out at any time.
-                        Reply HELP for assistance or call{" "}
-                        <a
-                            href={`tel:${supportPhoneLink}`}
-                            className="text-gold underline"
-                        >
-                            {supportPhone}
-                        </a>.
-                        {" "}Message and data rates may apply.
-                        Message frequency will vary.
-                        Learn more in our{" "}
+    <span id="sms-consent-details">
+        You may reply STOP to opt out at any time.
+        Reply HELP for assistance or call{" "}
+        <a
+            href="tel:5166209158"
+            className="text-gold underline"
+        >
+            516-620-9158
+        </a>.
+        {" "}Message and data rates may apply.
+        Message frequency will vary.
+        Learn more in our{" "}
 
-                        <Link
-                            to="/privacy"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-gold underline"
-                        >
-                            Privacy Policy
-                        </Link>
+        <Link
+            to="/privacy"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-gold underline"
+        >
+            Privacy Policy
+        </Link>
 
-                        {" "}and{" "}
+        {" "}and{" "}
 
-                        <Link
-                            to="/terms"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-gold underline"
-                        >
-                            Terms &amp; Conditions
-                        </Link>.
-                    </span>
-                </div>
+        <Link
+            to="/terms"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-gold underline"
+        >
+            Terms &amp; Conditions
+        </Link>.
+    </span>
+</div>
+
             </div>
             <div className="flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
                 <div className="flex items-center gap-4 text-sm text-bone/70">
